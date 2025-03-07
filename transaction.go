@@ -54,28 +54,28 @@ func (tx *Transaction) UnmarshalBase64(b64 string) error {
 
 var _ bin.EncoderDecoder = &Transaction{}
 
-func (t *Transaction) HasAccount(account PublicKey) (bool, error) {
-	return t.Message.HasAccount(account)
+func (tx *Transaction) HasAccount(account PublicKey) (bool, error) {
+	return tx.Message.HasAccount(account)
 }
 
-func (t *Transaction) IsSigner(account PublicKey) bool {
-	return t.Message.IsSigner(account)
+func (tx *Transaction) IsSigner(account PublicKey) bool {
+	return tx.Message.IsSigner(account)
 }
 
-func (t *Transaction) IsWritable(account PublicKey) (bool, error) {
-	return t.Message.IsWritable(account)
+func (tx *Transaction) IsWritable(account PublicKey) (bool, error) {
+	return tx.Message.IsWritable(account)
 }
 
-func (t *Transaction) AccountMetaList() ([]*AccountMeta, error) {
-	return t.Message.AccountMetaList()
+func (tx *Transaction) AccountMetaList() ([]*AccountMeta, error) {
+	return tx.Message.AccountMetaList()
 }
 
-func (t *Transaction) ResolveProgramIDIndex(programIDIndex uint16) (PublicKey, error) {
-	return t.Message.ResolveProgramIDIndex(programIDIndex)
+func (tx *Transaction) ResolveProgramIDIndex(programIDIndex uint16) (PublicKey, error) {
+	return tx.Message.ResolveProgramIDIndex(programIDIndex)
 }
 
-func (t *Transaction) GetAccountIndex(account PublicKey) (uint16, error) {
-	return t.Message.GetAccountIndex(account)
+func (tx *Transaction) GetAccountIndex(account PublicKey) (uint16, error) {
+	return tx.Message.GetAccountIndex(account)
 }
 
 // TransactionFromDecoder decodes a transaction from a decoder.
@@ -551,8 +551,14 @@ func (tx *Transaction) PartialSign(getter privateKeyGetter) (out []Signature, er
 	}
 
 	for i, key := range signerKeys {
+		if !tx.Signatures[i].IsZero() {
+			continue
+		}
 		privateKey := getter(key)
 		if privateKey != nil {
+			if privateKey.PublicKey() != key {
+				return nil, fmt.Errorf("invalid signer, expected %s, actual %s", key, privateKey.PublicKey())
+			}
 			s, err := privateKey.Sign(messageContent)
 			if err != nil {
 				return nil, fmt.Errorf("failed to signed with key %q: %w", key.String(), err)
@@ -565,12 +571,6 @@ func (tx *Transaction) PartialSign(getter privateKeyGetter) (out []Signature, er
 }
 
 func (tx *Transaction) Sign(getter privateKeyGetter) (out []Signature, err error) {
-	signerKeys := tx.Message.signerKeys()
-	for _, key := range signerKeys {
-		if getter(key) == nil {
-			return nil, fmt.Errorf("signer key %q not found. Ensure all the signer keys are in the vault", key.String())
-		}
-	}
 	return tx.PartialSign(getter)
 }
 
