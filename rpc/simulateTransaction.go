@@ -38,8 +38,16 @@ type SimulateTransactionResult struct {
 	// (for example due to an invalid blockhash or signature verification failure)
 	Logs []string `json:"logs,omitempty"`
 
+	// Array of log messages the transaction instructions output during execution,
+	// null if simulation failed before the transaction was able to execute
+	// (for example due to an invalid blockhash or signature verification failure)
+	InnerInstructions []InnerInstruction `json:"innerInstructions,omitempty"`
+
 	// Array of accounts with the same length as the accounts.addresses array in the request.
-	Accounts []*Account `json:"accounts"`
+	LoadedAccountsDataSize uint32 `json:"loadedAccountsDataSize"`
+
+	// Array of accounts with the same length as the accounts.addresses array in the request.
+	Accounts []*Account `json:"accounts,omitempty"`
 
 	// The number of compute budget units consumed during the processing of this transaction.
 	UnitsConsumed *uint64 `json:"unitsConsumed,omitempty"`
