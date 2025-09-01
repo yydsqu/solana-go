@@ -626,13 +626,13 @@ func (mx *Message) UnmarshalLegacy(decoder *bin.Decoder) (err error) {
 				if numAccounts > decoder.Remaining() {
 					return fmt.Errorf("ix[%v]: numAccounts %d is greater than remaining bytes %d", instructionIndex, numAccounts, decoder.Remaining())
 				}
-				mx.Instructions[instructionIndex].Accounts = make([]uint16, numAccounts)
+				mx.Instructions[instructionIndex].Accounts = make([]byte, numAccounts)
 				for i := 0; i < numAccounts; i++ {
 					accountIndex, err := decoder.ReadUint8()
 					if err != nil {
 						return fmt.Errorf("unable to decode accountIndex for ix[%d].Accounts[%d]: %w", instructionIndex, i, err)
 					}
-					mx.Instructions[instructionIndex].Accounts[i] = uint16(accountIndex)
+					mx.Instructions[instructionIndex].Accounts[i] = accountIndex
 				}
 			}
 			{
@@ -647,7 +647,7 @@ func (mx *Message) UnmarshalLegacy(decoder *bin.Decoder) (err error) {
 				if err != nil {
 					return fmt.Errorf("unable to decode dataBytes for ix[%d]: %w", instructionIndex, err)
 				}
-				mx.Instructions[instructionIndex].Data = (Base58)(dataBytes)
+				mx.Instructions[instructionIndex].Data = dataBytes
 			}
 		}
 	}

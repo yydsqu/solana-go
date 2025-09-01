@@ -78,6 +78,8 @@ type SimulateTransactionOpts struct {
 	// (default: false, conflicts with SigVerify)
 	ReplaceRecentBlockhash bool
 
+	InnerInstructions bool
+
 	Accounts *SimulateTransactionAccountsOpts
 }
 
@@ -125,6 +127,9 @@ func (cl *Client) SimulateRawTransactionWithOpts(
 		}
 		if opts.ReplaceRecentBlockhash {
 			obj["replaceRecentBlockhash"] = opts.ReplaceRecentBlockhash
+		}
+		if opts.InnerInstructions {
+			obj["innerInstructions"] = opts.InnerInstructions
 		}
 		if opts.Accounts != nil {
 			obj["accounts"] = M{

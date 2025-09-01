@@ -32,6 +32,8 @@ import (
 	"github.com/gagliardetto/solana-go/text"
 )
 
+var _ bin.EncoderDecoder = &Transaction{}
+
 type Transaction struct {
 	// A list of base-58 encoded signatures applied to the transaction.
 	// The list is always of length `message.header.numRequiredSignatures` and not empty.
@@ -43,7 +45,6 @@ type Transaction struct {
 	Message Message `json:"message"`
 }
 
-// UnmarshalBase64 decodes a base64 encoded transaction.
 func (tx *Transaction) UnmarshalBase64(b64 string) error {
 	b, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
@@ -52,30 +53,318 @@ func (tx *Transaction) UnmarshalBase64(b64 string) error {
 	return tx.UnmarshalWithDecoder(bin.NewBinDecoder(b))
 }
 
-var _ bin.EncoderDecoder = &Transaction{}
-
-func (t *Transaction) HasAccount(account PublicKey) (bool, error) {
-	return t.Message.HasAccount(account)
+func (tx *Transaction) HasAccount(account PublicKey) (bool, error) {
+	return tx.Message.HasAccount(account)
 }
 
-func (t *Transaction) IsSigner(account PublicKey) bool {
-	return t.Message.IsSigner(account)
+func (tx *Transaction) IsSigner(account PublicKey) bool {
+	return tx.Message.IsSigner(account)
 }
 
-func (t *Transaction) IsWritable(account PublicKey) (bool, error) {
-	return t.Message.IsWritable(account)
+func (tx *Transaction) IsWritable(account PublicKey) (bool, error) {
+	return tx.Message.IsWritable(account)
 }
 
-func (t *Transaction) AccountMetaList() ([]*AccountMeta, error) {
-	return t.Message.AccountMetaList()
+func (tx *Transaction) AccountMetaList() ([]*AccountMeta, error) {
+	return tx.Message.AccountMetaList()
 }
 
-func (t *Transaction) ResolveProgramIDIndex(programIDIndex uint16) (PublicKey, error) {
-	return t.Message.ResolveProgramIDIndex(programIDIndex)
+func (tx *Transaction) ResolveProgramIDIndex(programIDIndex uint16) (PublicKey, error) {
+	return tx.Message.ResolveProgramIDIndex(programIDIndex)
 }
 
-func (t *Transaction) GetAccountIndex(account PublicKey) (uint16, error) {
-	return t.Message.GetAccountIndex(account)
+func (tx *Transaction) GetAccountIndex(account PublicKey) (uint16, error) {
+	return tx.Message.GetAccountIndex(account)
+}
+
+func (tx *Transaction) MarshalBinary() ([]byte, error) {
+	messageContent, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode tx.Message to binary: %w", err)
+	}
+	var signatureCount []byte
+	bin.EncodeCompactU16Length(&signatureCount, len(tx.Signatures))
+	output := make([]byte, 0, len(signatureCount)+len(signatureCount)*64+len(messageContent))
+	output = append(output, signatureCount...)
+	for _, sig := range tx.Signatures {
+		output = append(output, sig[:]...)
+	}
+	output = append(output, messageContent...)
+
+	return output, nil
+}
+
+func (tx *Transaction) MarshalWithEncoder(encoder *bin.Encoder) error {
+	out, err := tx.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	return encoder.WriteBytes(out, false)
+}
+
+func (tx *Transaction) UnmarshalWithDecoder(decoder *bin.Decoder) (err error) {
+	{
+		numSignatures, err := decoder.ReadCompactU16()
+		if err != nil {
+			return fmt.Errorf("unable to read numSignatures: %w", err)
+		}
+		if numSignatures < 0 {
+			return fmt.Errorf("numSignatures is negative")
+		}
+		if numSignatures > decoder.Remaining()/64 {
+			return fmt.Errorf("numSignatures %d is too large for remaining bytes %d", numSignatures, decoder.Remaining())
+		}
+		tx.Signatures = make([]Signature, numSignatures)
+		for i := 0; i < numSignatures; i++ {
+			if _, err = decoder.Read(tx.Signatures[i][:]); err != nil {
+				return fmt.Errorf("unable to read tx.Signatures[%d]: %w", i, err)
+			}
+		}
+	}
+	{
+		if err = tx.Message.UnmarshalWithDecoder(decoder); err != nil {
+			return fmt.Errorf("unable to decode tx.Message: %w", err)
+		}
+	}
+	return nil
+}
+
+func (tx *Transaction) PartialSign(getter privateKeyGetter) (out []Signature, err error) {
+	messageContent, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode message for signing: %w", err)
+	}
+	if len(messageContent) > 1294 {
+		return nil, fmt.Errorf("message is too large for signing")
+	}
+	signerKeys := tx.Message.signerKeys()
+	// Ensure that the transaction has the correct number of signatures initialized
+	if len(tx.Signatures) == 0 {
+		// Initialize the Signatures slice to the correct length if it's empty
+		tx.Signatures = make([]Signature, len(signerKeys))
+	} else if len(tx.Signatures) != len(signerKeys) {
+		// Return an error if the current length of the Signatures slice doesn't match the expected number
+		return nil, fmt.Errorf("invalid signatures length, expected %d, actual %d", len(signerKeys), len(tx.Signatures))
+	}
+
+	for i, key := range signerKeys {
+		privateKey := getter(key)
+		if privateKey == nil {
+			continue
+		}
+		if privateKey.PublicKey() != key {
+			return nil, fmt.Errorf("invalid public key for signing, expected %s, actual %s", key, privateKey.PublicKey())
+		}
+		if tx.Signatures[i], err = privateKey.Sign(messageContent); err != nil {
+			return nil, fmt.Errorf("failed to signed with key %q: %w", key.String(), err)
+		}
+	}
+
+	return tx.Signatures, nil
+}
+
+func (tx *Transaction) Sign(getter privateKeyGetter) (out []Signature, err error) {
+	signerKeys := tx.Message.signerKeys()
+	for _, key := range signerKeys {
+		if getter(key) == nil {
+			return nil, fmt.Errorf("signer key %q not found. Ensure all the signer keys are in the vault", key.String())
+		}
+	}
+	return tx.PartialSign(getter)
+}
+
+func (tx *Transaction) EncodeTree(encoder *text.TreeEncoder) (int, error) {
+	tx.EncodeToTree(encoder)
+	return encoder.WriteString(encoder.Tree.String())
+}
+
+func (tx *Transaction) String() string {
+	buf := new(bytes.Buffer)
+	_, err := tx.EncodeTree(text.NewTreeEncoder(buf, ""))
+	if err != nil {
+		panic(err)
+	}
+	return buf.String()
+}
+
+func (tx *Transaction) ToBase64() (string, error) {
+	out, err := tx.MarshalBinary()
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(out), nil
+}
+
+func (tx *Transaction) MustToBase64() string {
+	out, err := tx.ToBase64()
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+func (tx *Transaction) EncodeToTree(parent treeout.Branches) {
+	parent.ParentFunc(func(txTree treeout.Branches) {
+		txTree.Child(fmt.Sprintf("Signatures[len=%v]", len(tx.Signatures))).ParentFunc(func(signaturesBranch treeout.Branches) {
+			for _, sig := range tx.Signatures {
+				signaturesBranch.Child(sig.String())
+			}
+		})
+
+		txTree.Child("Message").ParentFunc(func(messageBranch treeout.Branches) {
+			tx.Message.EncodeToTree(messageBranch)
+		})
+	})
+
+	parent.Child(fmt.Sprintf("Instructions[len=%v]", len(tx.Message.Instructions))).ParentFunc(func(message treeout.Branches) {
+		for _, inst := range tx.Message.Instructions {
+
+			progKey, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
+			if err == nil {
+				accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
+				if err != nil {
+					message.Child(fmt.Sprintf(text.RedBG("cannot ResolveInstructionAccounts: %s"), err))
+					return
+				}
+				decodedInstruction, err := DecodeInstruction(progKey, accounts, inst.Data)
+				if err == nil {
+					if enToTree, ok := decodedInstruction.(text.EncodableToTree); ok {
+						enToTree.EncodeToTree(message)
+					} else {
+						message.Child(spew.Sdump(decodedInstruction))
+					}
+				} else {
+					// TODO: log error?
+					message.Child(fmt.Sprintf(text.RedBG("cannot decode instruction for %s program: %s"), progKey, err)).
+						Child(text.IndigoBG("Program") + ": " + text.Bold("<unknown>") + " " + text.ColorizeBG(progKey.String())).
+						//
+						ParentFunc(func(programBranch treeout.Branches) {
+							programBranch.Child(text.Purple(text.Bold("Instruction")) + ": " + text.Bold("<unknown>")).
+								//
+								ParentFunc(func(instructionBranch treeout.Branches) {
+									// Data of the instruction call:
+									instructionBranch.Child(text.Sf("data[len=%v bytes]", len(inst.Data))).ParentFunc(func(paramsBranch treeout.Branches) {
+										paramsBranch.Child(bin.FormatByteSlice(inst.Data))
+									})
+
+									// Accounts of the instruction call:
+									instructionBranch.Child(text.Sf("accounts[len=%v]", len(accounts))).ParentFunc(func(accountsBranch treeout.Branches) {
+										for i := range accounts {
+											accountsBranch.Child(formatMeta(text.Sf("accounts[%v]", i), accounts[i]))
+										}
+									})
+								})
+						})
+				}
+			} else {
+				message.Child(fmt.Sprintf(text.RedBG("cannot ResolveProgramIDIndex: %s"), err))
+			}
+		}
+	})
+}
+
+func (tx *Transaction) VerifySignatures() error {
+	msg, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	signers := tx.Message.Signers()
+
+	if len(signers) != len(tx.Signatures) {
+		return fmt.Errorf(
+			"got %v signers, but %v signatures",
+			len(signers),
+			len(tx.Signatures),
+		)
+	}
+
+	for i, sig := range tx.Signatures {
+		if !sig.Verify(signers[i], msg) {
+			return fmt.Errorf("invalid signature by %s", signers[i].String())
+		}
+	}
+
+	return nil
+}
+
+func (tx *Transaction) GetProgramIDs() (PublicKeySlice, error) {
+	programIDs := make(PublicKeySlice, 0)
+	for ixi, inst := range tx.Message.Instructions {
+		progKey, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
+		if err == nil {
+			programIDs = append(programIDs, progKey)
+		} else {
+			return nil, fmt.Errorf("cannot resolve program ID for instruction %d: %w", ixi, err)
+		}
+	}
+	return programIDs, nil
+}
+
+func (tx *Transaction) NumWriteableAccounts() int {
+	return countWriteableAccounts(tx)
+}
+
+func (tx *Transaction) NumSigners() int {
+	return countSigners(tx)
+}
+
+func (tx *Transaction) IsVote() bool {
+	for _, inst := range tx.Message.Instructions {
+		progKey, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
+		if err == nil {
+			if progKey.Equals(VoteProgramID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (tx *Transaction) NumReadonlyAccounts() int {
+	return countReadonlyAccounts(tx)
+}
+
+func (tx *Transaction) SignMessage(getter privateKeyGetter) ([]byte, error) {
+	messageContent, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode message for signing: %w", err)
+	}
+
+	signerKeys := tx.Message.signerKeys()
+	if len(tx.Signatures) == 0 {
+		tx.Signatures = make([]Signature, len(signerKeys))
+	} else if len(tx.Signatures) != len(signerKeys) {
+		return nil, fmt.Errorf("invalid signatures length, expected %d, actual %d", len(signerKeys), len(tx.Signatures))
+	}
+
+	var signatureCount []byte
+	bin.EncodeCompactU16Length(&signatureCount, len(tx.Signatures))
+	output := make([]byte, 0, len(signatureCount)+len(signatureCount)*64+len(messageContent))
+	output = append(output, signatureCount...)
+
+	for i, key := range signerKeys {
+		privateKey := getter(key)
+		if privateKey == nil {
+			output = append(output, tx.Signatures[i][:]...)
+			continue
+		}
+		if privateKey.PublicKey() != key {
+			return nil, fmt.Errorf("invalid public key for signing, expected %s, actual %s", key, privateKey.PublicKey())
+		}
+		if tx.Signatures[i], err = privateKey.Sign(messageContent); err != nil {
+			return nil, fmt.Errorf("failed to signed with key %q: %w", key.String(), err)
+		}
+		output = append(output, tx.Signatures[i][:]...)
+	}
+
+	output = append(output, messageContent...)
+
+	if len(output) > 1232 {
+		return nil, fmt.Errorf("transaction too large:max: raw 1232")
+	}
+
+	return output, nil
 }
 
 // TransactionFromDecoder decodes a transaction from a decoder.
@@ -133,10 +422,22 @@ type CompiledInstruction struct {
 	// List of ordered indices into the message.accountKeys array indicating which accounts to pass to the program.
 	// NOTE: it is actually a []uint8, but using a uint16 because []uint8 is treated as a []byte everywhere,
 	// and that can be an issue.
-	Accounts []uint16 `json:"accounts"`
+	Accounts []byte `json:"accounts"`
 
 	// The program input data encoded in a base-58 string.
 	Data Base58 `json:"data"`
+}
+
+func (ci *CompiledInstruction) GetProgramIdIndex() uint32 {
+	return uint32(ci.ProgramIDIndex)
+}
+
+func (ci *CompiledInstruction) GetAccounts() []byte {
+	return ci.Accounts
+}
+
+func (ci *CompiledInstruction) GetData() []byte {
+	return ci.Data
 }
 
 func (ci *CompiledInstruction) ResolveInstructionAccounts(message *Message) ([]*AccountMeta, error) {
@@ -431,18 +732,18 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 		message.SetAddressTableLookups(lookups)
 	}
 
-	var idx uint16
-	accountKeyIndex := make(map[string]uint16, len(message.AccountKeys)+len(lookupsWritableKeys)+len(lookupsReadOnlyKeys))
+	var idx uint8
+	accountKeyIndex := make(map[PublicKey]uint8, len(message.AccountKeys)+len(lookupsWritableKeys)+len(lookupsReadOnlyKeys))
 	for _, acc := range message.AccountKeys {
-		accountKeyIndex[acc.String()] = idx
+		accountKeyIndex[acc] = idx
 		idx++
 	}
 	for _, acc := range lookupsWritableKeys {
-		accountKeyIndex[acc.String()] = idx
+		accountKeyIndex[acc] = idx
 		idx++
 	}
 	for _, acc := range lookupsReadOnlyKeys {
-		accountKeyIndex[acc.String()] = idx
+		accountKeyIndex[acc] = idx
 		idx++
 	}
 
@@ -456,16 +757,16 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 
 	for txIdx, instruction := range instructions {
 		accounts = instruction.Accounts()
-		accountIndex := make([]uint16, len(accounts))
+		accountIndex := make([]byte, len(accounts))
 		for idx, acc := range accounts {
-			accountIndex[idx] = accountKeyIndex[acc.PublicKey.String()]
+			accountIndex[idx] = byte(accountKeyIndex[acc.PublicKey])
 		}
 		data, err := instruction.Data()
 		if err != nil {
 			return nil, fmt.Errorf("unable to encode instructions [%d]: %w", txIdx, err)
 		}
 		message.Instructions = append(message.Instructions, CompiledInstruction{
-			ProgramIDIndex: accountKeyIndex[instruction.ProgramID().String()],
+			ProgramIDIndex: uint16(accountKeyIndex[instruction.ProgramID()]),
 			Accounts:       accountIndex,
 			Data:           data,
 		})
@@ -477,194 +778,6 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 }
 
 type privateKeyGetter func(key PublicKey) *PrivateKey
-
-func (tx *Transaction) MarshalBinary() ([]byte, error) {
-	messageContent, err := tx.Message.MarshalBinary()
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode tx.Message to binary: %w", err)
-	}
-
-	var signatureCount []byte
-	bin.EncodeCompactU16Length(&signatureCount, len(tx.Signatures))
-	output := make([]byte, 0, len(signatureCount)+len(signatureCount)*64+len(messageContent))
-	output = append(output, signatureCount...)
-	for _, sig := range tx.Signatures {
-		output = append(output, sig[:]...)
-	}
-	output = append(output, messageContent...)
-
-	return output, nil
-}
-
-func (tx Transaction) MarshalWithEncoder(encoder *bin.Encoder) error {
-	out, err := tx.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	return encoder.WriteBytes(out, false)
-}
-
-func (tx *Transaction) UnmarshalWithDecoder(decoder *bin.Decoder) (err error) {
-	{
-		numSignatures, err := decoder.ReadCompactU16()
-		if err != nil {
-			return fmt.Errorf("unable to read numSignatures: %w", err)
-		}
-		if numSignatures < 0 {
-			return fmt.Errorf("numSignatures is negative")
-		}
-		if numSignatures > decoder.Remaining()/64 {
-			return fmt.Errorf("numSignatures %d is too large for remaining bytes %d", numSignatures, decoder.Remaining())
-		}
-
-		tx.Signatures = make([]Signature, numSignatures)
-		for i := 0; i < numSignatures; i++ {
-			_, err := decoder.Read(tx.Signatures[i][:])
-			if err != nil {
-				return fmt.Errorf("unable to read tx.Signatures[%d]: %w", i, err)
-			}
-		}
-	}
-	{
-		err := tx.Message.UnmarshalWithDecoder(decoder)
-		if err != nil {
-			return fmt.Errorf("unable to decode tx.Message: %w", err)
-		}
-	}
-	return nil
-}
-
-func (tx *Transaction) PartialSign(getter privateKeyGetter) (out []Signature, err error) {
-	messageContent, err := tx.Message.MarshalBinary()
-	if err != nil {
-		return nil, fmt.Errorf("unable to encode message for signing: %w", err)
-	}
-	signerKeys := tx.Message.signerKeys()
-
-	// Ensure that the transaction has the correct number of signatures initialized
-	if len(tx.Signatures) == 0 {
-		// Initialize the Signatures slice to the correct length if it's empty
-		tx.Signatures = make([]Signature, len(signerKeys))
-	} else if len(tx.Signatures) != len(signerKeys) {
-		// Return an error if the current length of the Signatures slice doesn't match the expected number
-		return nil, fmt.Errorf("invalid signatures length, expected %d, actual %d", len(signerKeys), len(tx.Signatures))
-	}
-
-	for i, key := range signerKeys {
-		privateKey := getter(key)
-		if privateKey != nil {
-			s, err := privateKey.Sign(messageContent)
-			if err != nil {
-				return nil, fmt.Errorf("failed to signed with key %q: %w", key.String(), err)
-			}
-			// Directly assign the signature to the corresponding position in the transaction's signature slice
-			tx.Signatures[i] = s
-		}
-	}
-	return tx.Signatures, nil
-}
-
-func (tx *Transaction) Sign(getter privateKeyGetter) (out []Signature, err error) {
-	signerKeys := tx.Message.signerKeys()
-	for _, key := range signerKeys {
-		if getter(key) == nil {
-			return nil, fmt.Errorf("signer key %q not found. Ensure all the signer keys are in the vault", key.String())
-		}
-	}
-	return tx.PartialSign(getter)
-}
-
-func (tx *Transaction) EncodeTree(encoder *text.TreeEncoder) (int, error) {
-	tx.EncodeToTree(encoder)
-	return encoder.WriteString(encoder.Tree.String())
-}
-
-// String returns a human-readable string representation of the transaction data.
-// To disable colors, set "github.com/gagliardetto/solana-go/text".DisableColors = true
-func (tx *Transaction) String() string {
-	buf := new(bytes.Buffer)
-	_, err := tx.EncodeTree(text.NewTreeEncoder(buf, ""))
-	if err != nil {
-		panic(err)
-	}
-	return buf.String()
-}
-
-func (tx Transaction) ToBase64() (string, error) {
-	out, err := tx.MarshalBinary()
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(out), nil
-}
-
-func (tx Transaction) MustToBase64() string {
-	out, err := tx.ToBase64()
-	if err != nil {
-		panic(err)
-	}
-	return out
-}
-
-func (tx *Transaction) EncodeToTree(parent treeout.Branches) {
-	parent.ParentFunc(func(txTree treeout.Branches) {
-		txTree.Child(fmt.Sprintf("Signatures[len=%v]", len(tx.Signatures))).ParentFunc(func(signaturesBranch treeout.Branches) {
-			for _, sig := range tx.Signatures {
-				signaturesBranch.Child(sig.String())
-			}
-		})
-
-		txTree.Child("Message").ParentFunc(func(messageBranch treeout.Branches) {
-			tx.Message.EncodeToTree(messageBranch)
-		})
-	})
-
-	parent.Child(fmt.Sprintf("Instructions[len=%v]", len(tx.Message.Instructions))).ParentFunc(func(message treeout.Branches) {
-		for _, inst := range tx.Message.Instructions {
-
-			progKey, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
-			if err == nil {
-				accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
-				if err != nil {
-					message.Child(fmt.Sprintf(text.RedBG("cannot ResolveInstructionAccounts: %s"), err))
-					return
-				}
-				decodedInstruction, err := DecodeInstruction(progKey, accounts, inst.Data)
-				if err == nil {
-					if enToTree, ok := decodedInstruction.(text.EncodableToTree); ok {
-						enToTree.EncodeToTree(message)
-					} else {
-						message.Child(spew.Sdump(decodedInstruction))
-					}
-				} else {
-					// TODO: log error?
-					message.Child(fmt.Sprintf(text.RedBG("cannot decode instruction for %s program: %s"), progKey, err)).
-						Child(text.IndigoBG("Program") + ": " + text.Bold("<unknown>") + " " + text.ColorizeBG(progKey.String())).
-						//
-						ParentFunc(func(programBranch treeout.Branches) {
-							programBranch.Child(text.Purple(text.Bold("Instruction")) + ": " + text.Bold("<unknown>")).
-								//
-								ParentFunc(func(instructionBranch treeout.Branches) {
-									// Data of the instruction call:
-									instructionBranch.Child(text.Sf("data[len=%v bytes]", len(inst.Data))).ParentFunc(func(paramsBranch treeout.Branches) {
-										paramsBranch.Child(bin.FormatByteSlice(inst.Data))
-									})
-
-									// Accounts of the instruction call:
-									instructionBranch.Child(text.Sf("accounts[len=%v]", len(accounts))).ParentFunc(func(accountsBranch treeout.Branches) {
-										for i := range accounts {
-											accountsBranch.Child(formatMeta(text.Sf("accounts[%v]", i), accounts[i]))
-										}
-									})
-								})
-						})
-				}
-			} else {
-				message.Child(fmt.Sprintf(text.RedBG("cannot ResolveProgramIDIndex: %s"), err))
-			}
-		}
-	})
-}
 
 func formatMeta(name string, meta *AccountMeta) string {
 	if meta == nil {
@@ -685,63 +798,11 @@ func formatMeta(name string, meta *AccountMeta) string {
 	return out
 }
 
-// VerifySignatures verifies all the signatures in the transaction
-// against the pubkeys of the signers.
-func (tx *Transaction) VerifySignatures() error {
-	msg, err := tx.Message.MarshalBinary()
-	if err != nil {
-		return err
-	}
-
-	signers := tx.Message.Signers()
-
-	if len(signers) != len(tx.Signatures) {
-		return fmt.Errorf(
-			"got %v signers, but %v signatures",
-			len(signers),
-			len(tx.Signatures),
-		)
-	}
-
-	for i, sig := range tx.Signatures {
-		if !sig.Verify(signers[i], msg) {
-			return fmt.Errorf("invalid signature by %s", signers[i].String())
-		}
-	}
-
-	return nil
-}
-
-func (tx *Transaction) GetProgramIDs() (PublicKeySlice, error) {
-	programIDs := make(PublicKeySlice, 0)
-	for ixi, inst := range tx.Message.Instructions {
-		progKey, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
-		if err == nil {
-			programIDs = append(programIDs, progKey)
-		} else {
-			return nil, fmt.Errorf("cannot resolve program ID for instruction %d: %w", ixi, err)
-		}
-	}
-	return programIDs, nil
-}
-
-func (tx *Transaction) NumWriteableAccounts() int {
-	return countWriteableAccounts(tx)
-}
-
-func (tx *Transaction) NumSigners() int {
-	return countSigners(tx)
-}
-
 func countSigners(tx *Transaction) (count int) {
 	if tx == nil {
 		return -1
 	}
 	return tx.Message.Signers().Len()
-}
-
-func (tx *Transaction) NumReadonlyAccounts() int {
-	return countReadonlyAccounts(tx)
 }
 
 func countReadonlyAccounts(tx *Transaction) (count int) {
@@ -801,17 +862,4 @@ func getStaticAccountIndex(tx *Transaction, key PublicKey) (int, bool) {
 		}
 	}
 	return -1, false
-}
-
-func (tx *Transaction) IsVote() bool {
-	// is vote if any of the instructions are of the vote program
-	for _, inst := range tx.Message.Instructions {
-		progKey, err := tx.ResolveProgramIDIndex(inst.ProgramIDIndex)
-		if err == nil {
-			if progKey.Equals(VoteProgramID) {
-				return true
-			}
-		}
-	}
-	return false
 }
