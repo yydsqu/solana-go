@@ -149,57 +149,7 @@ func (k PrivateKey) PublicKey() PublicKey {
 	return publicKey
 }
 
-// PK is a convenience alias for PublicKey
-type PK = PublicKey
-
-func (p PublicKey) Verify(message []byte, signature Signature) bool {
-	pub := ed25519.PublicKey(p[:])
-	return ed25519.Verify(pub, message, signature[:])
-}
-
 type PublicKey [PublicKeyLength]byte
-
-// PublicKeyFromBytes creates a PublicKey from a byte slice that must be 32 bytes long.
-// NOTE: it will accept on- and off-curve pubkeys.
-func PublicKeyFromBytes(in []byte) (out PublicKey) {
-	byteCount := len(in)
-
-	if byteCount != PublicKeyLength {
-		panic(fmt.Errorf("invalid public key size, expected %v, got %d", PublicKeyLength, byteCount))
-	}
-
-	copy(out[:], in)
-	return
-}
-
-// MPK is a convenience alias for MustPublicKeyFromBase58
-func MPK(in string) PublicKey {
-	return MustPublicKeyFromBase58(in)
-}
-
-func MustPublicKeyFromBase58(in string) PublicKey {
-	out, err := PublicKeyFromBase58(in)
-	if err != nil {
-		panic(err)
-	}
-	return out
-}
-
-// PublicKeyFromBase58 creates a PublicKey from a base58 encoded string.
-// NOTE: it will accept on- and off-curve pubkeys.
-func PublicKeyFromBase58(in string) (out PublicKey, err error) {
-	val, err := base58.Decode(in)
-	if err != nil {
-		return out, fmt.Errorf("decode: %w", err)
-	}
-
-	if len(val) != PublicKeyLength {
-		return out, fmt.Errorf("invalid length, expected %v, got %d", PublicKeyLength, len(val))
-	}
-
-	copy(out[:], val)
-	return
-}
 
 func (p PublicKey) MarshalText() ([]byte, error) {
 	return []byte(base58.Encode(p[:])), nil
@@ -218,7 +168,6 @@ func (p *PublicKey) UnmarshalJSON(data []byte) (err error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
-
 	*p, err = PublicKeyFromBase58(s)
 	if err != nil {
 		return fmt.Errorf("invalid public key %q: %w", s, err)
@@ -284,20 +233,69 @@ func (p PublicKey) ToPointer() *PublicKey {
 }
 
 func (p PublicKey) Bytes() []byte {
-	return []byte(p[:])
+	return p[:]
 }
 
-// Check if a `Pubkey` is on the ed25519 curve.
 func (p PublicKey) IsOnCurve() bool {
 	return IsOnCurve(p[:])
 }
 
-var zeroPublicKey = PublicKey{}
+// PK is a convenience alias for PublicKey
+type PK = PublicKey
+
+func (p PublicKey) Verify(message []byte, signature Signature) bool {
+	pub := ed25519.PublicKey(p[:])
+	return ed25519.Verify(pub, message, signature[:])
+}
+
+// PublicKeyFromBytes creates a PublicKey from a byte slice that must be 32 bytes long.
+// NOTE: it will accept on- and off-curve pubkeys.
+func PublicKeyFromBytes(in []byte) (out PublicKey) {
+	byteCount := len(in)
+
+	if byteCount != PublicKeyLength {
+		panic(fmt.Errorf("invalid public key size, expected %v, got %d", PublicKeyLength, byteCount))
+	}
+
+	copy(out[:], in)
+	return
+}
+
+// MPK is a convenience alias for MustPublicKeyFromBase58
+func MPK(in string) PublicKey {
+	return MustPublicKeyFromBase58(in)
+}
+
+func MustPublicKeyFromBase58(in string) PublicKey {
+	out, err := PublicKeyFromBase58(in)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+// PublicKeyFromBase58 creates a PublicKey from a base58 encoded string.
+// NOTE: it will accept on- and off-curve pubkeys.
+func PublicKeyFromBase58(in string) (out PublicKey, err error) {
+	val, err := base58.Decode(in)
+	if err != nil {
+		return out, fmt.Errorf("decode: %w", err)
+	}
+
+	if len(val) != PublicKeyLength {
+		return out, fmt.Errorf("invalid length, expected %v, got %d", PublicKeyLength, len(val))
+	}
+
+	copy(out[:], val)
+	return
+}
+
+var ZeroPublicKey = PublicKey{}
 
 // IsZero returns whether the public key is zero.
 // NOTE: the System Program public key is also zero.
 func (p PublicKey) IsZero() bool {
-	return p == zeroPublicKey
+	return p == ZeroPublicKey
 }
 
 func (p *PublicKey) Set(s string) (err error) {

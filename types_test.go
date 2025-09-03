@@ -31,7 +31,7 @@ func TestCompiledInstructions(t *testing.T) {
 
 	ci := &CompiledInstruction{
 		ProgramIDIndex: 5,
-		Accounts:       []uint16{2, 5, 8},
+		Accounts:       []byte{2, 5, 8},
 		Data:           Base58([]byte{1, 2, 3, 4, 5}),
 	}
 	buf := &bytes.Buffer{}

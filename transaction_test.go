@@ -46,7 +46,6 @@ func (t *testTransactionInstructions) Data() ([]byte, error) {
 }
 
 func TestNewTransaction(t *testing.T) {
-	debugNewTransaction = true
 
 	instructions := []Instruction{
 		&testTransactionInstructions{
@@ -96,12 +95,12 @@ func TestNewTransaction(t *testing.T) {
 	assert.Equal(t, trx.Message.Instructions, []CompiledInstruction{
 		{
 			ProgramIDIndex: 5,
-			Accounts:       []uint16{0, 0o1},
+			Accounts:       []byte{0, 0o1},
 			Data:           []byte{0xaa, 0xbb},
 		},
 		{
 			ProgramIDIndex: 6,
-			Accounts:       []uint16{4, 3, 1, 2},
+			Accounts:       []byte{4, 3, 1, 2},
 			Data:           []byte{0xcc, 0xdd},
 		},
 	})
@@ -271,7 +270,7 @@ func TestTransactionDecode(t *testing.T) {
 		[]CompiledInstruction{
 			{
 				ProgramIDIndex: 2,
-				Accounts: []uint16{
+				Accounts: []byte{
 					0,
 					1,
 				},

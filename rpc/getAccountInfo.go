@@ -90,11 +90,7 @@ type GetAccountInfoOpts struct {
 // GetAccountInfoWithOpts returns all information associated with the account of provided publicKey.
 // You can specify the encoding of the returned data with the encoding parameter.
 // You can limit the returned account data with the offset and length parameters.
-func (cl *Client) GetAccountInfoWithOpts(
-	ctx context.Context,
-	account solana.PublicKey,
-	opts *GetAccountInfoOpts,
-) (*GetAccountInfoResult, error) {
+func (cl *Client) GetAccountInfoWithOpts(ctx context.Context, account solana.PublicKey, opts *GetAccountInfoOpts) (*GetAccountInfoResult, error) {
 	out, err := cl.getAccountInfoWithOpts(ctx, account, opts)
 	if err != nil {
 		return nil, err
@@ -105,11 +101,7 @@ func (cl *Client) GetAccountInfoWithOpts(
 	return out, nil
 }
 
-func (cl *Client) getAccountInfoWithOpts(
-	ctx context.Context,
-	account solana.PublicKey,
-	opts *GetAccountInfoOpts,
-) (out *GetAccountInfoResult, err error) {
+func (cl *Client) getAccountInfoWithOpts(ctx context.Context, account solana.PublicKey, opts *GetAccountInfoOpts) (out *GetAccountInfoResult, err error) {
 
 	obj := M{
 		// default encoding:

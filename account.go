@@ -56,47 +56,38 @@ type AccountMeta struct {
 	IsSigner   bool
 }
 
-// Meta intializes a new AccountMeta with the provided pubKey.
-func Meta(
-	pubKey PublicKey,
-) *AccountMeta {
-	return &AccountMeta{
-		PublicKey: pubKey,
-	}
-}
-
-// WRITE sets IsWritable to true.
 func (meta *AccountMeta) WRITE() *AccountMeta {
 	meta.IsWritable = true
 	return meta
 }
 
-// SIGNER sets IsSigner to true.
 func (meta *AccountMeta) SIGNER() *AccountMeta {
 	meta.IsSigner = true
 	return meta
 }
 
-func NewAccountMeta(
-	pubKey PublicKey,
-	WRITE bool,
-	SIGNER bool,
-) *AccountMeta {
+func (meta *AccountMeta) Less(act *AccountMeta) bool {
+	if meta.IsSigner != act.IsSigner {
+		return meta.IsSigner
+	}
+	if meta.IsWritable != act.IsWritable {
+		return meta.IsWritable
+	}
+	return false
+}
+
+func Meta(key PublicKey) *AccountMeta {
 	return &AccountMeta{
-		PublicKey:  pubKey,
-		IsWritable: WRITE,
-		IsSigner:   SIGNER,
+		PublicKey: key,
 	}
 }
 
-func (a AccountMeta) less(act *AccountMeta) bool {
-	if a.IsSigner != act.IsSigner {
-		return a.IsSigner
+func NewAccountMeta(key PublicKey, WRITE bool, SIGNER bool) *AccountMeta {
+	return &AccountMeta{
+		PublicKey:  key,
+		IsWritable: WRITE,
+		IsSigner:   SIGNER,
 	}
-	if a.IsWritable != act.IsWritable {
-		return a.IsWritable
-	}
-	return false
 }
 
 type AccountMetaSlice []*AccountMeta
@@ -113,15 +104,13 @@ func (slice *AccountMetaSlice) SetAccounts(accounts []*AccountMeta) error {
 func (slice AccountMetaSlice) GetAccounts() []*AccountMeta {
 	out := make([]*AccountMeta, 0, len(slice))
 	for i := range slice {
-		if slice[i] != nil {
+		if (slice)[i] != nil {
 			out = append(out, slice[i])
 		}
 	}
 	return out
 }
 
-// Get returns the AccountMeta at the desired index.
-// If the index is not present, it returns nil.
 func (slice AccountMetaSlice) Get(index int) *AccountMeta {
 	if len(slice) > index {
 		return slice[index]
@@ -129,7 +118,6 @@ func (slice AccountMetaSlice) Get(index int) *AccountMeta {
 	return nil
 }
 
-// GetSigners returns the accounts that are signers.
 func (slice AccountMetaSlice) GetSigners() []*AccountMeta {
 	signers := make([]*AccountMeta, 0, len(slice))
 	for _, ac := range slice {
@@ -140,7 +128,6 @@ func (slice AccountMetaSlice) GetSigners() []*AccountMeta {
 	return signers
 }
 
-// GetKeys returns the pubkeys of all AccountMeta.
 func (slice AccountMetaSlice) GetKeys() PublicKeySlice {
 	keys := make(PublicKeySlice, 0, len(slice))
 	for _, ac := range slice {

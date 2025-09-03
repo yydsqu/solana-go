@@ -21,44 +21,38 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
+	bin "github.com/gagliardetto/binary"
 	"io"
 
-	bin "github.com/gagliardetto/binary"
 	"github.com/mostynb/zstdpool-freelist"
 	"github.com/mr-tron/base58"
 )
+
+type EncodingType string
+
+const (
+	EncodingBase58     EncodingType = "base58"      // limited to Account data of less than 129 bytes
+	EncodingBase64     EncodingType = "base64"      // will return base64 encoded data for Account data of any size
+	EncodingBase64Zstd EncodingType = "base64+zstd" // compresses the Account data using Zstandard and base64-encodes the result
+	EncodingJSONParsed EncodingType = "jsonParsed"
+	EncodingJSON       EncodingType = "json"
+)
+
+var ZeroHash = Hash{}
 
 type Padding []byte
 
 type Hash PublicKey
 
-// MustHashFromBase58 decodes a base58 string into a Hash.
-// Panics on error.
-func MustHashFromBase58(in string) Hash {
-	return Hash(MustPublicKeyFromBase58(in))
-}
-
-// HashFromBase58 decodes a base58 string into a Hash.
-func HashFromBase58(in string) (Hash, error) {
-	tmp, err := PublicKeyFromBase58(in)
-	if err != nil {
-		return Hash{}, err
-	}
-	return Hash(tmp), nil
-}
-
-// HashFromBytes decodes a byte slice into a Hash.
 func HashFromBytes(in []byte) Hash {
 	return Hash(PublicKeyFromBytes(in))
 }
 
-// MarshalText implements encoding.TextMarshaler.
 func (ha Hash) MarshalText() ([]byte, error) {
 	s := base58.Encode(ha[:])
 	return []byte(s), nil
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
 func (ha *Hash) UnmarshalText(data []byte) (err error) {
 	tmp, err := HashFromBase58(string(data))
 	if err != nil {
@@ -90,10 +84,20 @@ func (ha Hash) Equals(pb Hash) bool {
 	return ha == pb
 }
 
-var zeroHash = Hash{}
+func MustHashFromBase58(in string) Hash {
+	return Hash(MustPublicKeyFromBase58(in))
+}
+
+func HashFromBase58(in string) (Hash, error) {
+	tmp, err := PublicKeyFromBase58(in)
+	if err != nil {
+		return Hash{}, err
+	}
+	return Hash(tmp), nil
+}
 
 func (ha Hash) IsZero() bool {
-	return ha == zeroHash
+	return ha == ZeroHash
 }
 
 func (ha Hash) String() string {
@@ -102,17 +106,16 @@ func (ha Hash) String() string {
 
 type Signature [64]byte
 
-var zeroSignature = Signature{}
+var ZeroSignature = Signature{}
 
 func (sig Signature) IsZero() bool {
-	return sig == zeroSignature
+	return sig == ZeroSignature
 }
 
 func (sig Signature) Equals(pb Signature) bool {
 	return sig == pb
 }
 
-// SignatureFromBase58 decodes a base58 string into a Signature.
 func SignatureFromBase58(in string) (out Signature, err error) {
 	val, err := base58.Decode(in)
 	if err != nil {
@@ -127,8 +130,6 @@ func SignatureFromBase58(in string) (out Signature, err error) {
 	return
 }
 
-// MustSignatureFromBase58 decodes a base58 string into a Signature.
-// Panics on error.
 func MustSignatureFromBase58(in string) Signature {
 	out, err := SignatureFromBase58(in)
 	if err != nil {
@@ -137,7 +138,6 @@ func MustSignatureFromBase58(in string) Signature {
 	return out
 }
 
-// SignatureFromBytes decodes a byte slice into a Signature.
 func SignatureFromBytes(in []byte) (out Signature) {
 	byteCount := len(in)
 	if byteCount == 0 {
@@ -256,14 +256,58 @@ type Data struct {
 }
 
 func (t Data) MarshalJSON() ([]byte, error) {
-	return json.Marshal(
-		[]interface{}{
-			t.String(),
-			t.Encoding,
-		})
+	return json.Marshal([]interface{}{
+		t.String(),
+		t.Encoding,
+	})
 }
 
-var zstdDecoderPool = zstdpool.NewDecoderPool()
+func (t Data) String() string {
+	switch EncodingType(t.Encoding) {
+	case EncodingBase58:
+		return base58.Encode(t.Content)
+	case EncodingBase64:
+		return base64.StdEncoding.EncodeToString(t.Content)
+	case EncodingBase64Zstd:
+		enc, err := zstdEncoderPool.Get(nil)
+		if err != nil {
+			// TODO: remove panic?
+			panic(err)
+		}
+		defer zstdEncoderPool.Put(enc)
+		return base64.StdEncoding.EncodeToString(enc.EncodeAll(t.Content, nil))
+	default:
+		// TODO
+		return ""
+	}
+}
+
+func (obj Data) MarshalWithEncoder(encoder *bin.Encoder) (err error) {
+	err = encoder.WriteBytes(obj.Content, true)
+	if err != nil {
+		return err
+	}
+	err = encoder.WriteString(string(obj.Encoding))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (obj *Data) UnmarshalWithDecoder(decoder *bin.Decoder) (err error) {
+	obj.Content, err = decoder.ReadByteSlice()
+	if err != nil {
+		return err
+	}
+	{
+		enc, err := decoder.ReadString()
+		if err != nil {
+			return err
+		}
+		obj.Encoding = EncodingType(enc)
+	}
+	return nil
+}
 
 func (t *Data) UnmarshalJSON(data []byte) (err error) {
 	var in []string
@@ -318,54 +362,9 @@ func (t *Data) UnmarshalJSON(data []byte) (err error) {
 	return
 }
 
+var zstdDecoderPool = zstdpool.NewDecoderPool()
+
 var zstdEncoderPool = zstdpool.NewEncoderPool()
-
-func (t Data) String() string {
-	switch EncodingType(t.Encoding) {
-	case EncodingBase58:
-		return base58.Encode(t.Content)
-	case EncodingBase64:
-		return base64.StdEncoding.EncodeToString(t.Content)
-	case EncodingBase64Zstd:
-		enc, err := zstdEncoderPool.Get(nil)
-		if err != nil {
-			// TODO: remove panic?
-			panic(err)
-		}
-		defer zstdEncoderPool.Put(enc)
-		return base64.StdEncoding.EncodeToString(enc.EncodeAll(t.Content, nil))
-	default:
-		// TODO
-		return ""
-	}
-}
-
-func (obj Data) MarshalWithEncoder(encoder *bin.Encoder) (err error) {
-	err = encoder.WriteBytes(obj.Content, true)
-	if err != nil {
-		return err
-	}
-	err = encoder.WriteString(string(obj.Encoding))
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (obj *Data) UnmarshalWithDecoder(decoder *bin.Decoder) (err error) {
-	obj.Content, err = decoder.ReadByteSlice()
-	if err != nil {
-		return err
-	}
-	{
-		enc, err := decoder.ReadString()
-		if err != nil {
-			return err
-		}
-		obj.Encoding = EncodingType(enc)
-	}
-	return nil
-}
 
 type ByteWrapper struct {
 	io.Reader
@@ -379,24 +378,6 @@ func (w *ByteWrapper) ReadByte() (byte, error) {
 	return b[0], err
 }
 
-type EncodingType string
-
-const (
-	EncodingBase58     EncodingType = "base58"      // limited to Account data of less than 129 bytes
-	EncodingBase64     EncodingType = "base64"      // will return base64 encoded data for Account data of any size
-	EncodingBase64Zstd EncodingType = "base64+zstd" // compresses the Account data using Zstandard and base64-encodes the result
-
-	// attempts to use program-specific state parsers to
-	// return more human-readable and explicit account state data.
-	// If "jsonParsed" is requested but a parser cannot be found,
-	// the field falls back to "base64" encoding, detectable when the data field is type <string>.
-	// Cannot be used if specifying dataSlice parameters (offset, length).
-	EncodingJSONParsed EncodingType = "jsonParsed"
-
-	EncodingJSON EncodingType = "json" // NOTE: you're probably looking for EncodingJSONParsed
-)
-
-// IsAnyOfEncodingType checks whether the provided `candidate` is any of the `allowed`.
 func IsAnyOfEncodingType(candidate EncodingType, allowed ...EncodingType) bool {
 	for _, v := range allowed {
 		if candidate == v {

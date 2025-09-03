@@ -25,11 +25,14 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	bin "github.com/gagliardetto/binary"
+	"github.com/gagliardetto/solana-go/text"
 	"github.com/gagliardetto/treeout"
 	"github.com/mr-tron/base58"
-	"go.uber.org/zap"
+)
 
-	"github.com/gagliardetto/solana-go/text"
+const (
+	MaxRawTxSize  = 1232
+	SignatureSize = 64
 )
 
 var _ bin.EncoderDecoder = &Transaction{}
@@ -81,6 +84,10 @@ func (tx *Transaction) MarshalBinary() ([]byte, error) {
 	messageContent, err := tx.Message.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode tx.Message to binary: %w", err)
+	}
+	if len(tx.Signatures) == 0 {
+		signerKeys := tx.Message.signerKeys()
+		tx.Signatures = make([]Signature, len(signerKeys))
 	}
 	var signatureCount []byte
 	bin.EncodeCompactU16Length(&signatureCount, len(tx.Signatures))
@@ -357,13 +364,54 @@ func (tx *Transaction) SignMessage(getter privateKeyGetter) ([]byte, error) {
 		}
 		output = append(output, tx.Signatures[i][:]...)
 	}
-
 	output = append(output, messageContent...)
-
 	if len(output) > 1232 {
-		return nil, fmt.Errorf("transaction too large:max: raw 1232")
+		return output, fmt.Errorf("transaction too large:max: raw 1232(%d)", len(output))
+	}
+	return output, nil
+}
+
+func (tx *Transaction) SignTX(signers ...PrivateKey) ([]byte, error) {
+	messageContent, err := tx.Message.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode message for signing: %w", err)
 	}
 
+	signerKeys := tx.Message.signerKeys()
+	tx.Signatures = make([]Signature, len(signerKeys))
+
+	signerMap := make(map[PublicKey]PrivateKey, len(signers))
+
+	for _, s := range signers {
+		signerMap[s.PublicKey()] = s
+	}
+
+	for i, key := range signerKeys {
+		s, ok := signerMap[key]
+		if !ok {
+			continue
+		}
+		sig, err := s.Sign(messageContent)
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign with key %q: %w", key.String(), err)
+		}
+		tx.Signatures[i] = sig
+	}
+
+	var signatureCount []byte
+	bin.EncodeCompactU16Length(&signatureCount, len(tx.Signatures))
+
+	totalLen := len(signatureCount) + len(tx.Signatures)*SignatureSize + len(messageContent)
+	output := make([]byte, totalLen)
+	off := 0
+	off += copy(output[off:], signatureCount)
+	for _, sig := range tx.Signatures {
+		off += copy(output[off:], sig[:])
+	}
+	copy(output[off:], messageContent)
+	if len(output) > MaxRawTxSize {
+		return output, fmt.Errorf("transaction too large: max raw %d (got %d)", MaxRawTxSize, len(output))
+	}
 	return output, nil
 }
 
@@ -398,8 +446,6 @@ func TransactionFromBase58(b58 string) (*Transaction, error) {
 	return TransactionFromBytes(data)
 }
 
-// MustTransactionFromDecoder decodes a transaction from a decoder.
-// Panics on error.
 func MustTransactionFromDecoder(decoder *bin.Decoder) *Transaction {
 	out, err := TransactionFromDecoder(decoder)
 	if err != nil {
@@ -463,9 +509,42 @@ type TransactionOption interface {
 	apply(opts *transactionOptions)
 }
 
+func TransactionPayer(payer PublicKey) TransactionOption {
+	return transactionOptionFunc(func(opts *transactionOptions) { opts.payer = payer })
+}
+
+func TransactionAddressTables(tables map[PublicKey]PublicKeySlice) TransactionOption {
+	return transactionOptionFunc(func(opts *transactionOptions) {
+		if opts.addressTablesIndex == nil {
+			opts.addressTablesIndex = make(map[PublicKey]*AddressTableIndex, 50)
+		}
+		for addressTablePubKey, addressTable := range tables {
+			if len(addressTable) > 256 {
+				continue
+			}
+			for i, address := range addressTable {
+				_, ok := opts.addressTablesIndex[address]
+				if ok {
+					continue
+				}
+				opts.addressTablesIndex[address] = &AddressTableIndex{
+					Address: addressTablePubKey,
+					Index:   uint8(i),
+				}
+			}
+		}
+	})
+}
+
+func TransactionAddressTablesIndex(tables map[PublicKey]*AddressTableIndex) TransactionOption {
+	return transactionOptionFunc(func(opts *transactionOptions) {
+		opts.addressTablesIndex = tables
+	})
+}
+
 type transactionOptions struct {
-	payer         PublicKey
-	addressTables map[PublicKey]PublicKeySlice // [tablePubkey]addresses
+	payer              PublicKey
+	addressTablesIndex map[PublicKey]*AddressTableIndex
 }
 
 type transactionOptionFunc func(opts *transactionOptions)
@@ -474,34 +553,21 @@ func (f transactionOptionFunc) apply(opts *transactionOptions) {
 	f(opts)
 }
 
-func TransactionPayer(payer PublicKey) TransactionOption {
-	return transactionOptionFunc(func(opts *transactionOptions) { opts.payer = payer })
-}
-
-func TransactionAddressTables(tables map[PublicKey]PublicKeySlice) TransactionOption {
-	return transactionOptionFunc(func(opts *transactionOptions) { opts.addressTables = tables })
-}
-
-var debugNewTransaction = false
-
 type TransactionBuilder struct {
 	instructions    []Instruction
 	recentBlockHash Hash
 	opts            []TransactionOption
 }
 
-// NewTransactionBuilder creates a new instruction builder.
 func NewTransactionBuilder() *TransactionBuilder {
 	return &TransactionBuilder{}
 }
 
-// AddInstruction adds the provided instruction to the builder.
 func (builder *TransactionBuilder) AddInstruction(instruction Instruction) *TransactionBuilder {
 	builder.instructions = append(builder.instructions, instruction)
 	return builder
 }
 
-// SetRecentBlockHash sets the recent blockhash for the instruction builder.
 func (builder *TransactionBuilder) SetRecentBlockHash(recentBlockHash Hash) *TransactionBuilder {
 	builder.recentBlockHash = recentBlockHash
 	return builder
@@ -513,14 +579,11 @@ func (builder *TransactionBuilder) WithOpt(opt TransactionOption) *TransactionBu
 	return builder
 }
 
-// Set transaction fee payer.
-// If not set, defaults to first signer account of the first instruction.
 func (builder *TransactionBuilder) SetFeePayer(feePayer PublicKey) *TransactionBuilder {
 	builder.opts = append(builder.opts, TransactionPayer(feePayer))
 	return builder
 }
 
-// Build builds and returns a *Transaction.
 func (builder *TransactionBuilder) Build() (*Transaction, error) {
 	return NewTransaction(
 		builder.instructions,
@@ -529,22 +592,22 @@ func (builder *TransactionBuilder) Build() (*Transaction, error) {
 	)
 }
 
-type addressTablePubkeyWithIndex struct {
-	addressTable PublicKey
-	index        uint8
+type AddressTableIndex struct {
+	Address PublicKey
+	Index   uint8
 }
 
 func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...TransactionOption) (*Transaction, error) {
 	if len(instructions) == 0 {
 		return nil, fmt.Errorf("requires at-least one instruction to create a transaction")
 	}
-
 	options := transactionOptions{}
 	for _, opt := range opts {
 		opt.apply(&options)
 	}
 
 	feePayer := options.payer
+
 	if feePayer.IsZero() {
 		found := false
 		for _, act := range instructions[0].Accounts() {
@@ -559,52 +622,32 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 		}
 	}
 
-	addressLookupKeysMap := make(map[PublicKey]addressTablePubkeyWithIndex) // all accounts from tables as map
-	for addressTablePubKey, addressTable := range options.addressTables {
-		if len(addressTable) > 256 {
-			return nil, fmt.Errorf("max lookup table index exceeded for %s table", addressTablePubKey)
-		}
+	programIDs := make(PublicKeySlice, 0, 6)
+	accounts := make([]*AccountMeta, 0, 32)
 
-		for i, address := range addressTable {
-			_, ok := addressLookupKeysMap[address]
-			if ok {
-				continue
-			}
-
-			addressLookupKeysMap[address] = addressTablePubkeyWithIndex{
-				addressTable: addressTablePubKey,
-				index:        uint8(i),
-			}
-		}
-	}
-
-	programIDs := make(PublicKeySlice, 0)
-	accounts := []*AccountMeta{}
 	for _, instruction := range instructions {
 		accounts = append(accounts, instruction.Accounts()...)
 		programIDs.UniqueAppend(instruction.ProgramID())
 	}
 
-	// for IsInvoked check
 	programIDsMap := make(map[PublicKey]struct{}, len(programIDs))
-	// Add programID to the account list
+
 	for _, programID := range programIDs {
 		accounts = append(accounts, &AccountMeta{
 			PublicKey:  programID,
 			IsSigner:   false,
 			IsWritable: false,
 		})
-
 		programIDsMap[programID] = struct{}{}
 	}
 
-	// Sort. Prioritizing first by signer, then by writable
 	sort.SliceStable(accounts, func(i, j int) bool {
-		return accounts[i].less(accounts[j])
+		return accounts[i].Less(accounts[j])
 	})
 
 	uniqAccountsMap := map[PublicKey]uint64{}
-	uniqAccounts := []*AccountMeta{}
+	var uniqAccounts []*AccountMeta
+
 	for _, acc := range accounts {
 		if index, found := uniqAccountsMap[acc.PublicKey]; found {
 			uniqAccounts[index].IsWritable = uniqAccounts[index].IsWritable || acc.IsWritable
@@ -614,23 +657,15 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 		uniqAccountsMap[acc.PublicKey] = uint64(len(uniqAccounts) - 1)
 	}
 
-	if debugNewTransaction {
-		zlog.Debug("unique account sorted", zap.Int("account_count", len(uniqAccounts)))
-	}
-	// Move fee payer to the front
 	feePayerIndex := -1
 	for idx, acc := range uniqAccounts {
 		if acc.PublicKey.Equals(feePayer) {
 			feePayerIndex = idx
 		}
 	}
-	if debugNewTransaction {
-		zlog.Debug("current fee payer index", zap.Int("fee_payer_index", feePayerIndex))
-	}
 
 	accountCount := len(uniqAccounts)
 	if feePayerIndex < 0 {
-		// fee payer is not part of accounts we want to add it
 		accountCount++
 	}
 	allKeys := make([]*AccountMeta, accountCount)
@@ -659,38 +694,33 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 
 	message := Message{
 		RecentBlockhash: recentBlockHash,
+		Instructions:    make([]CompiledInstruction, 0, len(instructions)),
+		AccountKeys:     make(PublicKeySlice, 0, len(allKeys)),
 	}
-	lookupsMap := make(map[PublicKey]struct { // extended MessageAddressTableLookup
-		AccountKey      PublicKey // The account key of the address table.
+
+	lookupsMap := make(map[PublicKey]struct {
+		AccountKey      PublicKey
 		WritableIndexes []uint8
 		Writable        []PublicKey
 		ReadonlyIndexes []uint8
 		Readonly        []PublicKey
 	})
+
 	for idx, acc := range allKeys {
-
-		if debugNewTransaction {
-			zlog.Debug("transaction account",
-				zap.Int("account_index", idx),
-				zap.Stringer("account_pub_key", acc.PublicKey),
-			)
-		}
-
-		addressLookupKeyEntry, isPresentedInTables := addressLookupKeysMap[acc.PublicKey]
+		addressLookupKeyEntry, isPresentedInTables := options.addressTablesIndex[acc.PublicKey]
 		_, isInvoked := programIDsMap[acc.PublicKey]
-		// skip fee payer
 		if isPresentedInTables && idx != 0 && !acc.IsSigner && !isInvoked {
-			lookup := lookupsMap[addressLookupKeyEntry.addressTable]
+			lookup := lookupsMap[addressLookupKeyEntry.Address]
 			if acc.IsWritable {
-				lookup.WritableIndexes = append(lookup.WritableIndexes, addressLookupKeyEntry.index)
+				lookup.WritableIndexes = append(lookup.WritableIndexes, addressLookupKeyEntry.Index)
 				lookup.Writable = append(lookup.Writable, acc.PublicKey)
 			} else {
-				lookup.ReadonlyIndexes = append(lookup.ReadonlyIndexes, addressLookupKeyEntry.index)
+				lookup.ReadonlyIndexes = append(lookup.ReadonlyIndexes, addressLookupKeyEntry.Index)
 				lookup.Readonly = append(lookup.Readonly, acc.PublicKey)
 			}
 
-			lookupsMap[addressLookupKeyEntry.addressTable] = lookup
-			continue // prevent changing message.Header properties
+			lookupsMap[addressLookupKeyEntry.Address] = lookup
+			continue
 		}
 
 		message.AccountKeys = append(message.AccountKeys, acc.PublicKey)
@@ -716,7 +746,6 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 		for tablePubKey, l := range lookupsMap {
 			lookupsWritableKeys = append(lookupsWritableKeys, l.Writable...)
 			lookupsReadOnlyKeys = append(lookupsReadOnlyKeys, l.Readonly...)
-
 			lookups = append(lookups, MessageAddressTableLookup{
 				AccountKey:      tablePubKey,
 				WritableIndexes: l.WritableIndexes,
@@ -724,42 +753,32 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 			})
 		}
 
-		// prevent error created in ResolveLookups
-		err := message.SetAddressTables(options.addressTables)
-		if err != nil {
-			return nil, fmt.Errorf("SetAddressTables: %s", err)
-		}
 		message.SetAddressTableLookups(lookups)
 	}
 
 	var idx uint8
 	accountKeyIndex := make(map[PublicKey]uint8, len(message.AccountKeys)+len(lookupsWritableKeys)+len(lookupsReadOnlyKeys))
+
 	for _, acc := range message.AccountKeys {
 		accountKeyIndex[acc] = idx
 		idx++
 	}
+
 	for _, acc := range lookupsWritableKeys {
 		accountKeyIndex[acc] = idx
 		idx++
 	}
+
 	for _, acc := range lookupsReadOnlyKeys {
 		accountKeyIndex[acc] = idx
 		idx++
-	}
-
-	if debugNewTransaction {
-		zlog.Debug("message header compiled",
-			zap.Uint8("num_required_signatures", message.Header.NumRequiredSignatures),
-			zap.Uint8("num_readonly_signed_accounts", message.Header.NumReadonlySignedAccounts),
-			zap.Uint8("num_readonly_unsigned_accounts", message.Header.NumReadonlyUnsignedAccounts),
-		)
 	}
 
 	for txIdx, instruction := range instructions {
 		accounts = instruction.Accounts()
 		accountIndex := make([]byte, len(accounts))
 		for idx, acc := range accounts {
-			accountIndex[idx] = byte(accountKeyIndex[acc.PublicKey])
+			accountIndex[idx] = accountKeyIndex[acc.PublicKey]
 		}
 		data, err := instruction.Data()
 		if err != nil {

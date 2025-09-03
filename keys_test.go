@@ -22,6 +22,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"flag"
+	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,7 +71,7 @@ func TestPublicKeyFromBytes(t *testing.T) {
 			if test.isErr {
 				require.Panics(t, func() {
 					actual := PublicKeyFromBytes(bytes)
-					require.Equal(t, zeroPublicKey, actual)
+					require.Equal(t, ZeroPublicKey, actual)
 				})
 			} else {
 				actual := PublicKeyFromBytes(bytes)
@@ -95,7 +97,7 @@ func TestPublicKeyFromBase58(t *testing.T) {
 		{
 			"hand crafted error",
 			"SerkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-			zeroPublicKey,
+			ZeroPublicKey,
 			errors.New("invalid length, expected 32, got 30"),
 		},
 	}
@@ -629,4 +631,22 @@ func TestFindTokenMetadataAddress(t *testing.T) {
 	// https://solscan.io/account/GfihrEYCPrvUyrMyMQPdhGEStxa9nKEK2Wfn9iK4AZq2
 	assert.Equal(t, metadataPDA, MustPublicKeyFromBase58("GfihrEYCPrvUyrMyMQPdhGEStxa9nKEK2Wfn9iK4AZq2"))
 	assert.Equal(t, bumpSeed, uint8(0xfd))
+}
+
+type Name struct {
+	Ss PublicKey `json:"ss,omitempty"`
+}
+
+func TestFindTokenMetadataAddres(t *testing.T) {
+	name := Name{}
+	marshal, err := json.Marshal(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(string(marshal))
+	var name1 Name
+	if err := json.Unmarshal(marshal, &name1); err != nil {
+		t.Fatal(err)
+	}
+	spew.Dump(name1)
 }

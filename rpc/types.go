@@ -28,6 +28,18 @@ import (
 	"github.com/gagliardetto/solana-go"
 )
 
+const (
+	CommitmentMax          CommitmentType = "max"          // Deprecated as of v1.5.5
+	CommitmentRecent       CommitmentType = "recent"       // Deprecated as of v1.5.5
+	CommitmentRoot         CommitmentType = "root"         // Deprecated as of v1.5.5
+	CommitmentSingle       CommitmentType = "single"       // Deprecated as of v1.5.5
+	CommitmentSingleGossip CommitmentType = "singleGossip" // Deprecated as of v1.5.5
+
+	CommitmentFinalized CommitmentType = "finalized"
+	CommitmentConfirmed CommitmentType = "confirmed"
+	CommitmentProcessed CommitmentType = "processed"
+)
+
 type Context struct {
 	Slot uint64 `json:"slot"`
 }
@@ -96,30 +108,22 @@ const (
 )
 
 type TransactionWithMeta struct {
-	// The slot this transaction was processed in.
-	Slot uint64 `json:"slot"`
-
-	// Estimated production time, as Unix timestamp (seconds since the Unix epoch)
-	// of when the transaction was processed.
-	// Nil if not available.
-	BlockTime *solana.UnixTimeSeconds `json:"blockTime" bin:"optional"`
-
-	Transaction *DataBytesOrJSON `json:"transaction"`
-
-	// Transaction status metadata object
-	Meta    *TransactionMeta   `json:"meta,omitempty"`
-	Version TransactionVersion `json:"version"`
+	Slot        uint64                  `json:"slot"`
+	BlockTime   *solana.UnixTimeSeconds `json:"blockTime" bin:"optional"`
+	Transaction *DataBytesOrJSON        `json:"transaction"`
+	Meta        *TransactionMeta        `json:"meta,omitempty"`
+	Version     TransactionVersion      `json:"version"`
 }
 
-func (dt TransactionWithMeta) GetParsedTransaction() (*solana.Transaction, error) {
-	if dt.Transaction == nil {
+func (twm TransactionWithMeta) GetParsedTransaction() (*solana.Transaction, error) {
+	if twm.Transaction == nil {
 		return nil, fmt.Errorf("transaction is nil")
 	}
-	if dt.Transaction.rawDataEncoding != solana.EncodingJSONParsed {
+	if twm.Transaction.rawDataEncoding != solana.EncodingJSONParsed {
 		return nil, fmt.Errorf("data is not in JSONParsed encoding")
 	}
 	var parsedTransaction solana.Transaction
-	if err := json.Unmarshal(dt.Transaction.asJSON, &parsedTransaction); err != nil {
+	if err := json.Unmarshal(twm.Transaction.asJSON, &parsedTransaction); err != nil {
 		return nil, err
 	}
 	return &parsedTransaction, nil
@@ -254,8 +258,6 @@ type CompiledInstruction struct {
 	StackHeight uint16 `json:"stackHeight"`
 }
 
-// Ok  interface{} `json:"Ok"`  // <null> Transaction was successful
-// Err interface{} `json:"Err"` // Transaction failed with TransactionError
 type DeprecatedTransactionMetaStatus M
 
 type TransactionSignature struct {
@@ -283,7 +285,6 @@ type GetAccountInfoResult struct {
 	Value *Account `json:"value"`
 }
 
-// GetBinary returns the binary representation of the account data.
 func (a *GetAccountInfoResult) GetBinary() []byte {
 	if a == nil {
 		return nil
@@ -297,7 +298,6 @@ func (a *GetAccountInfoResult) GetBinary() []byte {
 	return a.Value.Data.GetBinary()
 }
 
-// Bytes returns the binary representation of the account data.
 func (a *GetAccountInfoResult) Bytes() []byte {
 	return a.GetBinary()
 }
@@ -325,6 +325,29 @@ type Account struct {
 
 	// The amount of storage space required to store the token account
 	Space uint64 `json:"space"`
+}
+
+func (account *Account) GetBinary() []byte {
+	if account == nil {
+		return nil
+	}
+	return account.Data.GetBinary()
+}
+
+func (account *Account) BorshDecode(v any) error {
+	binary := account.GetBinary()
+	if binary == nil {
+		return fmt.Errorf("data is empty")
+	}
+	return bin.NewBorshDecoder(binary).Decode(v)
+}
+
+func (account *Account) BinDecode(v any) error {
+	binary := account.GetBinary()
+	if binary == nil {
+		return fmt.Errorf("data is empty")
+	}
+	return bin.NewBinDecoder(binary).Decode(v)
 }
 
 type DataBytesOrJSON struct {
@@ -359,32 +382,24 @@ func (dt DataBytesOrJSON) MarshalJSON() ([]byte, error) {
 	return json.Marshal(dt.asDecodedBinary)
 }
 
-func (wrap *DataBytesOrJSON) UnmarshalJSON(data []byte) error {
+func (dt *DataBytesOrJSON) UnmarshalJSON(data []byte) error {
 	if len(data) == 0 || (len(data) == 4 && string(data) == "null") {
-		// TODO: is this an error?
 		return nil
 	}
-
 	firstChar := data[0]
-
 	switch firstChar {
-	// Check if first character is `[`, standing for a JSON array.
 	case '[':
-		// It's base64 (or similar)
 		{
-			err := wrap.asDecodedBinary.UnmarshalJSON(data)
+			err := dt.asDecodedBinary.UnmarshalJSON(data)
 			if err != nil {
 				return err
 			}
-			wrap.rawDataEncoding = wrap.asDecodedBinary.Encoding
+			dt.rawDataEncoding = dt.asDecodedBinary.Encoding
 		}
 	case '{':
-		// It's JSON, most likely.
-		// TODO: is it always JSON???
 		{
-			// Store raw bytes, and unmarshal on request.
-			wrap.asJSON = data
-			wrap.rawDataEncoding = solana.EncodingJSONParsed
+			dt.asJSON = data
+			dt.rawDataEncoding = solana.EncodingJSONParsed
 		}
 	default:
 		return fmt.Errorf("unknown kind: %v", data)
@@ -393,8 +408,6 @@ func (wrap *DataBytesOrJSON) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// GetBinary returns the decoded bytes if the encoding is
-// "base58", "base64", or "base64+zstd".
 func (dt *DataBytesOrJSON) GetBinary() []byte {
 	if dt == nil {
 		return nil
@@ -402,8 +415,6 @@ func (dt *DataBytesOrJSON) GetBinary() []byte {
 	return dt.asDecodedBinary.Content
 }
 
-// GetRawJSON returns a stdjson.RawMessage when the data
-// encoding is "jsonParsed".
 func (dt *DataBytesOrJSON) GetRawJSON() stdjson.RawMessage {
 	return dt.asJSON
 }
@@ -412,6 +423,7 @@ type DataSlice struct {
 	Offset *uint64 `json:"offset,omitempty"`
 	Length *uint64 `json:"length,omitempty"`
 }
+
 type GetProgramAccountsOpts struct {
 	Commitment CommitmentType `json:"commitment,omitempty"`
 
@@ -453,28 +465,6 @@ type RPCFilterMemcmp struct {
 }
 
 type CommitmentType string
-
-const (
-	CommitmentMax          CommitmentType = "max"          // Deprecated as of v1.5.5
-	CommitmentRecent       CommitmentType = "recent"       // Deprecated as of v1.5.5
-	CommitmentRoot         CommitmentType = "root"         // Deprecated as of v1.5.5
-	CommitmentSingle       CommitmentType = "single"       // Deprecated as of v1.5.5
-	CommitmentSingleGossip CommitmentType = "singleGossip" // Deprecated as of v1.5.5
-
-	// The node will query the most recent block confirmed by supermajority
-	// of the cluster as having reached maximum lockout,
-	// meaning the cluster has recognized this block as finalized.
-	CommitmentFinalized CommitmentType = "finalized"
-
-	// The node will query the most recent block that has been voted on by supermajority of the cluster.
-	// - It incorporates votes from gossip and replay.
-	// - It does not count votes on descendants of a block, only direct votes on that block.
-	// - This confirmation level also upholds "optimistic confirmation" guarantees in release 1.3 and onwards.
-	CommitmentConfirmed CommitmentType = "confirmed"
-
-	// The node will query its most recent block. Note that the block may still be skipped by the cluster.
-	CommitmentProcessed CommitmentType = "processed"
-)
 
 type ParsedTransaction struct {
 	Signatures []solana.Signature `json:"signatures"`

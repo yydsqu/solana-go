@@ -23,11 +23,7 @@ import (
 )
 
 // GetAccountInfoWithRpcContext is similar to GetAccountInfoWithOpts but will return rpcContext and nil account if account is not found
-func (cl *Client) GetAccountInfoWithRpcContext(
-	ctx context.Context,
-	account solana.PublicKey,
-	opts *GetAccountInfoOpts,
-) (*Account, *RPCContext, error) {
+func (cl *Client) GetAccountInfoWithRpcContext(ctx context.Context, account solana.PublicKey, opts *GetAccountInfoOpts) (*Account, *RPCContext, error) {
 	out, err := cl.getAccountInfoWithOpts(ctx, account, opts)
 	if err != nil {
 		return nil, nil, err

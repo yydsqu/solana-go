@@ -90,7 +90,7 @@ func Test_AccountMeta_less(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.expect, test.left.less(test.right))
+			assert.Equal(t, test.expect, test.left.Less(test.right))
 		})
 	}
 }

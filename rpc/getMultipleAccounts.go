@@ -26,11 +26,9 @@ type GetMultipleAccountsResult struct {
 	Value []*Account `json:"value"`
 }
 
-// GetMultipleAccounts returns the account information for a list of Pubkeys.
-func (cl *Client) GetMultipleAccounts(
-	ctx context.Context,
-	accounts ...solana.PublicKey, // An array of Pubkeys to query
-) (out *GetMultipleAccountsResult, err error) {
+type GetMultipleAccountsOpts GetAccountInfoOpts
+
+func (cl *Client) GetMultipleAccounts(ctx context.Context, accounts ...solana.PublicKey) (out *GetMultipleAccountsResult, err error) {
 	return cl.GetMultipleAccountsWithOpts(
 		ctx,
 		accounts,
@@ -38,16 +36,10 @@ func (cl *Client) GetMultipleAccounts(
 	)
 }
 
-type GetMultipleAccountsOpts GetAccountInfoOpts
-
-// GetMultipleAccountsWithOpts returns the account information for a list of Pubkeys.
-func (cl *Client) GetMultipleAccountsWithOpts(
-	ctx context.Context,
-	accounts []solana.PublicKey,
-	opts *GetMultipleAccountsOpts,
-) (out *GetMultipleAccountsResult, err error) {
-	params := []interface{}{accounts}
-
+func (cl *Client) GetMultipleAccountsWithOpts(ctx context.Context, accounts []solana.PublicKey, opts *GetMultipleAccountsOpts) (out *GetMultipleAccountsResult, err error) {
+	params := []interface{}{
+		accounts,
+	}
 	if opts != nil {
 		obj := M{}
 		if opts.Encoding != "" {
@@ -73,12 +65,13 @@ func (cl *Client) GetMultipleAccountsWithOpts(
 		}
 	}
 
-	err = cl.rpcClient.CallForInto(ctx, &out, "getMultipleAccounts", params)
-	if err != nil {
+	if err = cl.rpcClient.CallForInto(ctx, &out, "getMultipleAccounts", params); err != nil {
 		return nil, err
 	}
+
 	if out == nil || out.Value == nil {
 		return nil, ErrNotFound
 	}
+
 	return
 }
