@@ -26,10 +26,7 @@ import (
 
 var ErrInstructionDecoderNotFound = errors.New("instruction decoder not found")
 
-// InstructionDecoder receives the AccountMeta FOR THAT INSTRUCTION,
-// and not the accounts of the *Message object. Resolve with
-// CompiledInstruction.ResolveInstructionAccounts(message) beforehand.
-type InstructionDecoder func(instructionAccounts []*AccountMeta, data []byte) (interface{}, error)
+type InstructionDecoder func(instructionAccounts []*AccountMeta, data []byte) (any, error)
 
 var instructionDecoderRegistry = newInstructionDecoderRegistry()
 
@@ -48,7 +45,6 @@ func newInstructionDecoderRegistry() *decoderRegistry {
 func (reg *decoderRegistry) Has(programID PublicKey) bool {
 	reg.mu.RLock()
 	defer reg.mu.RUnlock()
-
 	_, ok := reg.decoders[programID]
 	return ok
 }
@@ -61,10 +57,6 @@ func (reg *decoderRegistry) Get(programID PublicKey) (InstructionDecoder, bool) 
 	return decoder, ok
 }
 
-// RegisterIfNew registers the provided decoder for the provided programID ONLY if there isn't
-// already a registered decoder for the programID.
-// Returns true if was successfully registered right now (non-previously registered);
-// returns false if there already was a decoder registered.
 func (reg *decoderRegistry) RegisterIfNew(programID PublicKey, decoder InstructionDecoder) bool {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -90,11 +82,11 @@ func RegisterInstructionDecoder(programID PublicKey, decoder InstructionDecoder)
 	instructionDecoderRegistry.RegisterIfNew(programID, decoder)
 }
 
-func isSameFunction(f1 interface{}, f2 interface{}) bool {
+func isSameFunction(f1 any, f2 any) bool {
 	return reflect.ValueOf(f1).Pointer() == reflect.ValueOf(f2).Pointer()
 }
 
-func DecodeInstruction(programID PublicKey, accounts []*AccountMeta, data []byte) (interface{}, error) {
+func DecodeInstruction(programID PublicKey, accounts []*AccountMeta, data []byte) (any, error) {
 	decoder, found := instructionDecoderRegistry.Get(programID)
 	if !found {
 		return nil, ErrInstructionDecoderNotFound

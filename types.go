@@ -21,7 +21,6 @@ import (
 	"time"
 )
 
-// UnixTimeSeconds represents a UNIX second-resolution timestamp.
 type UnixTimeSeconds int64
 
 func (res UnixTimeSeconds) Time() time.Time {
@@ -32,7 +31,6 @@ func (res UnixTimeSeconds) String() string {
 	return res.Time().String()
 }
 
-// UnixTimeMilliseconds represents a UNIX millisecond-resolution timestamp.
 type UnixTimeMilliseconds int64
 
 func (res UnixTimeMilliseconds) Time() time.Time {
@@ -43,7 +41,6 @@ func (res UnixTimeMilliseconds) String() string {
 	return res.Time().String()
 }
 
-// DurationSeconds represents a duration in seconds.
 type DurationSeconds int64
 
 func (res DurationSeconds) Duration() time.Duration {
@@ -54,7 +51,6 @@ func (res DurationSeconds) String() string {
 	return res.Duration().String()
 }
 
-// DurationMilliseconds represents a duration in milliseconds.
 type DurationMilliseconds int64
 
 func (res DurationMilliseconds) Duration() time.Duration {

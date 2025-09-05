@@ -21,7 +21,6 @@ import (
 	"fmt"
 )
 
-// Wallet is a wrapper around a PrivateKey
 type Wallet struct {
 	PrivateKey PrivateKey
 }
@@ -76,20 +75,6 @@ func (meta *AccountMeta) Less(act *AccountMeta) bool {
 	return false
 }
 
-func Meta(key PublicKey) *AccountMeta {
-	return &AccountMeta{
-		PublicKey: key,
-	}
-}
-
-func NewAccountMeta(key PublicKey, WRITE bool, SIGNER bool) *AccountMeta {
-	return &AccountMeta{
-		PublicKey:  key,
-		IsWritable: WRITE,
-		IsSigner:   SIGNER,
-	}
-}
-
 type AccountMetaSlice []*AccountMeta
 
 func (slice *AccountMetaSlice) Append(account *AccountMeta) {
@@ -102,13 +87,7 @@ func (slice *AccountMetaSlice) SetAccounts(accounts []*AccountMeta) error {
 }
 
 func (slice AccountMetaSlice) GetAccounts() []*AccountMeta {
-	out := make([]*AccountMeta, 0, len(slice))
-	for i := range slice {
-		if (slice)[i] != nil {
-			out = append(out, slice[i])
-		}
-	}
-	return out
+	return slice
 }
 
 func (slice AccountMetaSlice) Get(index int) *AccountMeta {
@@ -160,6 +139,20 @@ func (slice AccountMetaSlice) SplitFrom(index int) (AccountMetaSlice, AccountMet
 	copy(second, slice[index:])
 
 	return first, second
+}
+
+func Meta(key PublicKey) *AccountMeta {
+	return &AccountMeta{
+		PublicKey: key,
+	}
+}
+
+func NewAccountMeta(key PublicKey, WRITE bool, SIGNER bool) *AccountMeta {
+	return &AccountMeta{
+		PublicKey:  key,
+		IsWritable: WRITE,
+		IsSigner:   SIGNER,
+	}
 }
 
 func calcSplitAtLengths(total int, index int) (int, int) {

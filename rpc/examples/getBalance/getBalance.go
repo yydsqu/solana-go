@@ -42,7 +42,7 @@ func main() {
 
 	var lamportsOnAccount = new(big.Float).SetUint64(uint64(out.Value))
 	// Convert lamports to sol:
-	var solBalance = new(big.Float).Quo(lamportsOnAccount, new(big.Float).SetUint64(solana.LAMPORTS_PER_SOL))
+	var solBalance = new(big.Float).Quo(lamportsOnAccount, new(big.Float).SetUint64(solana.LamportsPerSol))
 
 	// WARNING: this is not a precise conversion.
 	fmt.Println("◎", solBalance.Text('f', 10))

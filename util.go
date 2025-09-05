@@ -19,6 +19,7 @@ import (
 )
 
 var _10b = big.NewInt(10)
+
 var decimalsBigInt = []*big.Int{
 	new(big.Int).Exp(_10b, big.NewInt(1), nil),
 	new(big.Int).Exp(_10b, big.NewInt(2), nil),
@@ -52,11 +53,3 @@ func DecimalsInBigInt(decimal uint32) *big.Int {
 	}
 	return decimalsBig
 }
-
-//
-//func foo(numerator, denomiator *big.Int) {
-//	quotient := new(big.Int).Quo(numerator, denomiator)
-//	remainder := new(big.Int).Rem(numerator, denomiator)
-//	gcd := new(big.Int).GCD(nil, nil, remainder, denomiator)
-//
-//}

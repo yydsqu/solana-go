@@ -38,7 +38,10 @@ const (
 	EncodingJSON       EncodingType = "json"
 )
 
-var ZeroHash = Hash{}
+var (
+	ZeroHash      = Hash{}
+	ZeroSignature = Signature{}
+)
 
 type Padding []byte
 
@@ -48,7 +51,7 @@ func HashFromBytes(in []byte) Hash {
 	return Hash(PublicKeyFromBytes(in))
 }
 
-func (ha Hash) MarshalText() ([]byte, error) {
+func (ha *Hash) MarshalText() ([]byte, error) {
 	s := base58.Encode(ha[:])
 	return []byte(s), nil
 }
@@ -84,6 +87,14 @@ func (ha Hash) Equals(pb Hash) bool {
 	return ha == pb
 }
 
+func (ha Hash) IsZero() bool {
+	return ha == ZeroHash
+}
+
+func (ha Hash) String() string {
+	return base58.Encode(ha[:])
+}
+
 func MustHashFromBase58(in string) Hash {
 	return Hash(MustPublicKeyFromBase58(in))
 }
@@ -96,17 +107,7 @@ func HashFromBase58(in string) (Hash, error) {
 	return Hash(tmp), nil
 }
 
-func (ha Hash) IsZero() bool {
-	return ha == ZeroHash
-}
-
-func (ha Hash) String() string {
-	return base58.Encode(ha[:])
-}
-
 type Signature [64]byte
-
-var ZeroSignature = Signature{}
 
 func (sig Signature) IsZero() bool {
 	return sig == ZeroSignature
@@ -114,43 +115,6 @@ func (sig Signature) IsZero() bool {
 
 func (sig Signature) Equals(pb Signature) bool {
 	return sig == pb
-}
-
-func SignatureFromBase58(in string) (out Signature, err error) {
-	val, err := base58.Decode(in)
-	if err != nil {
-		return
-	}
-
-	if len(val) != SignatureLength {
-		err = fmt.Errorf("invalid length, expected 64, got %d", len(val))
-		return
-	}
-	copy(out[:], val)
-	return
-}
-
-func MustSignatureFromBase58(in string) Signature {
-	out, err := SignatureFromBase58(in)
-	if err != nil {
-		panic(err)
-	}
-	return out
-}
-
-func SignatureFromBytes(in []byte) (out Signature) {
-	byteCount := len(in)
-	if byteCount == 0 {
-		return
-	}
-
-	max := SignatureLength
-	if byteCount < max {
-		max = byteCount
-	}
-
-	copy(out[:], in[0:max])
-	return
 }
 
 func (p Signature) MarshalText() ([]byte, error) {
@@ -200,6 +164,43 @@ func (s Signature) Verify(pubkey PublicKey, msg []byte) bool {
 
 func (p Signature) String() string {
 	return base58.Encode(p[:])
+}
+
+func SignatureFromBase58(in string) (out Signature, err error) {
+	val, err := base58.Decode(in)
+	if err != nil {
+		return
+	}
+
+	if len(val) != SignatureLength {
+		err = fmt.Errorf("invalid length, expected 64, got %d", len(val))
+		return
+	}
+	copy(out[:], val)
+	return
+}
+
+func MustSignatureFromBase58(in string) Signature {
+	out, err := SignatureFromBase58(in)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+func SignatureFromBytes(in []byte) (out Signature) {
+	byteCount := len(in)
+	if byteCount == 0 {
+		return
+	}
+
+	max := SignatureLength
+	if byteCount < max {
+		max = byteCount
+	}
+
+	copy(out[:], in[0:max])
+	return
 }
 
 type Base64 []byte

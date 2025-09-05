@@ -28,6 +28,7 @@ func GetDecryptPassphrase() (string, error) {
 
 	return passphrase, nil
 }
+
 func GetEncryptPassphrase() (string, error) {
 	passphrase, err := GetPassword("Enter passphrase to encrypt your vault: ")
 	if err != nil {

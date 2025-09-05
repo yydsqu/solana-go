@@ -20,40 +20,50 @@ import (
 	"github.com/gagliardetto/solana-go"
 )
 
+type GetClusterNodesResult struct {
+	FeatureSet uint32 `json:"featureSet,omitempty"`
+
+	// Gossip network address for the node.
+	Gossip string `json:"gossip,omitempty"`
+
+	// Node public key.
+	Pubkey solana.PublicKey `json:"pubkey"`
+
+	// RPC WebSocket network address for the node, or empty if the WebSocket RPC service is not enabled.
+	PubSub string `json:"pubsub,omitempty"`
+
+	// ServeRepair network address for the node.
+	ServeRepair string `json:"serveRepair,omitempty"`
+
+	// TPUVote network address for the node.
+	TPUVote string `json:"tpuVote,omitempty"`
+
+	// Tvu network address for the node.
+	TVU string `json:"tvu,omitempty"`
+
+	// TPU network address for the node.
+	TPU string `json:"tpu,omitempty"`
+
+	TPUForwards string `json:"tpuForwards,omitempty"`
+
+	// TPU QUIC network address for the node.
+	TPUQuic string `json:"tpuQuic,omitempty"`
+
+	// TpuForwardsQuic QUIC network address for the node.
+	TPUForwardsQuic string `json:"tpuForwardsQuic,omitempty"`
+
+	// JSON RPC network address for the node, or empty if the JSON RPC service is not enabled.
+	RPC string `json:"rpc,omitempty"`
+
+	// The software version of the node, or empty if the version information is not available.
+	Version string `json:"version,omitempty"`
+
+	// The shred version the node has been configured to use.
+	ShredVersion uint16 `json:"shredVersion,omitempty"`
+}
+
 // GetClusterNodes returns information about all the nodes participating in the cluster.
 func (cl *Client) GetClusterNodes(ctx context.Context) (out []*GetClusterNodesResult, err error) {
 	err = cl.rpcClient.CallForInto(ctx, &out, "getClusterNodes", nil)
 	return
-}
-
-type GetClusterNodesResult struct {
-	// Node public key.
-	Pubkey solana.PublicKey `json:"pubkey"`
-
-	// TODO: "" or nil ?
-
-	// Gossip network address for the node.
-	Gossip *string `json:"gossip,omitempty"`
-
-	// TPU network address for the node.
-	TPU *string `json:"tpu,omitempty"`
-
-	// TPU QUIC network address for the node.
-	TPUQUIC *string `json:"tpuQuic,omitempty"`
-
-	// RPC WebSocket network address for the node, or empty if the WebSocket RPC service is not enabled.
-	PubSub *string `json:"pubsub,omitempty"`
-
-	// JSON RPC network address for the node, or empty if the JSON RPC service is not enabled.
-	RPC *string `json:"rpc,omitempty"`
-
-	// The software version of the node, or empty if the version information is not available.
-	Version *string `json:"version,omitempty"`
-
-	// TODO: what type is this?
-	// The unique identifier of the node's feature set.
-	FeatureSet uint32 `json:"featureSet,omitempty"`
-
-	// The shred version the node has been configured to use.
-	ShredVersion uint16 `json:"shredVersion,omitempty"`
 }

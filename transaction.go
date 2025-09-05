@@ -37,6 +37,52 @@ const (
 
 var _ bin.EncoderDecoder = &Transaction{}
 
+type Instruction interface {
+	ProgramID() PublicKey     // the programID the instruction acts on
+	Accounts() []*AccountMeta // returns the list of accounts the instructions requires
+	Data() ([]byte, error)    // the binary encoded instructions
+}
+
+type CompiledInstruction struct {
+	// Index into the message.accountKeys array indicating the program account that executes this instruction.
+	// NOTE: it is actually a uint8, but using a uint16 because uint8 is treated as a byte everywhere,
+	// and that can be an issue.
+	ProgramIDIndex uint16 `json:"programIdIndex"`
+
+	// List of ordered indices into the message.accountKeys array indicating which accounts to pass to the program.
+	// NOTE: it is actually a []uint8, but using a uint16 because []uint8 is treated as a []byte everywhere,
+	// and that can be an issue.
+	Accounts []byte `json:"accounts"`
+
+	// The program input data encoded in a base-58 string.
+	Data Base58 `json:"data"`
+}
+
+func (ci *CompiledInstruction) GetProgramIdIndex() uint32 {
+	return uint32(ci.ProgramIDIndex)
+}
+
+func (ci *CompiledInstruction) GetAccounts() []byte {
+	return ci.Accounts
+}
+
+func (ci *CompiledInstruction) GetData() []byte {
+	return ci.Data
+}
+
+func (ci *CompiledInstruction) ResolveInstructionAccounts(message *Message) ([]*AccountMeta, error) {
+	out := make([]*AccountMeta, len(ci.Accounts))
+	metas, err := message.AccountMetaList()
+	if err != nil {
+		return nil, err
+	}
+	for i, acct := range ci.Accounts {
+		out[i] = metas[acct]
+	}
+
+	return out, nil
+}
+
 type Transaction struct {
 	// A list of base-58 encoded signatures applied to the transaction.
 	// The list is always of length `message.header.numRequiredSignatures` and not empty.
@@ -415,7 +461,6 @@ func (tx *Transaction) SignTX(signers ...PrivateKey) ([]byte, error) {
 	return output, nil
 }
 
-// TransactionFromDecoder decodes a transaction from a decoder.
 func TransactionFromDecoder(decoder *bin.Decoder) (*Transaction, error) {
 	var out *Transaction
 	err := decoder.Decode(&out)
@@ -452,57 +497,6 @@ func MustTransactionFromDecoder(decoder *bin.Decoder) *Transaction {
 		panic(err)
 	}
 	return out
-}
-
-const (
-	AccountsTypeIndex = "Fee"
-	AccountsTypeKey   = "Key"
-)
-
-type CompiledInstruction struct {
-	// Index into the message.accountKeys array indicating the program account that executes this instruction.
-	// NOTE: it is actually a uint8, but using a uint16 because uint8 is treated as a byte everywhere,
-	// and that can be an issue.
-	ProgramIDIndex uint16 `json:"programIdIndex"`
-
-	// List of ordered indices into the message.accountKeys array indicating which accounts to pass to the program.
-	// NOTE: it is actually a []uint8, but using a uint16 because []uint8 is treated as a []byte everywhere,
-	// and that can be an issue.
-	Accounts []byte `json:"accounts"`
-
-	// The program input data encoded in a base-58 string.
-	Data Base58 `json:"data"`
-}
-
-func (ci *CompiledInstruction) GetProgramIdIndex() uint32 {
-	return uint32(ci.ProgramIDIndex)
-}
-
-func (ci *CompiledInstruction) GetAccounts() []byte {
-	return ci.Accounts
-}
-
-func (ci *CompiledInstruction) GetData() []byte {
-	return ci.Data
-}
-
-func (ci *CompiledInstruction) ResolveInstructionAccounts(message *Message) ([]*AccountMeta, error) {
-	out := make([]*AccountMeta, len(ci.Accounts))
-	metas, err := message.AccountMetaList()
-	if err != nil {
-		return nil, err
-	}
-	for i, acct := range ci.Accounts {
-		out[i] = metas[acct]
-	}
-
-	return out, nil
-}
-
-type Instruction interface {
-	ProgramID() PublicKey     // the programID the instruction acts on
-	Accounts() []*AccountMeta // returns the list of accounts the instructions requires
-	Data() ([]byte, error)    // the binary encoded instructions
 }
 
 type TransactionOption interface {
@@ -598,10 +592,13 @@ type AddressTableIndex struct {
 }
 
 func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...TransactionOption) (*Transaction, error) {
-	if len(instructions) == 0 {
-		return nil, fmt.Errorf("requires at-least one instruction to create a transaction")
-	}
-	options := transactionOptions{}
+	var (
+		options      = transactionOptions{}
+		uniqPrograms = make(map[PublicKey]struct{}, 6)
+		programIDs   = make(PublicKeySlice, 0, 6)
+		accounts     = make([]*AccountMeta, 0, 32)
+	)
+
 	for _, opt := range opts {
 		opt.apply(&options)
 	}
@@ -622,23 +619,17 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 		}
 	}
 
-	programIDs := make(PublicKeySlice, 0, 6)
-	accounts := make([]*AccountMeta, 0, 32)
-
 	for _, instruction := range instructions {
-		accounts = append(accounts, instruction.Accounts()...)
-		programIDs.UniqueAppend(instruction.ProgramID())
-	}
-
-	programIDsMap := make(map[PublicKey]struct{}, len(programIDs))
-
-	for _, programID := range programIDs {
 		accounts = append(accounts, &AccountMeta{
-			PublicKey:  programID,
+			PublicKey:  instruction.ProgramID(),
 			IsSigner:   false,
 			IsWritable: false,
 		})
-		programIDsMap[programID] = struct{}{}
+		accounts = append(accounts, instruction.Accounts()...)
+		if _, ok := uniqPrograms[instruction.ProgramID()]; ok {
+			continue
+		}
+		programIDs = append(programIDs, instruction.ProgramID())
 	}
 
 	sort.SliceStable(accounts, func(i, j int) bool {
@@ -646,6 +637,7 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 	})
 
 	uniqAccountsMap := map[PublicKey]uint64{}
+
 	var uniqAccounts []*AccountMeta
 
 	for _, acc := range accounts {
@@ -658,6 +650,7 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 	}
 
 	feePayerIndex := -1
+
 	for idx, acc := range uniqAccounts {
 		if acc.PublicKey.Equals(feePayer) {
 			feePayerIndex = idx
@@ -665,12 +658,15 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 	}
 
 	accountCount := len(uniqAccounts)
+
 	if feePayerIndex < 0 {
 		accountCount++
 	}
+
 	allKeys := make([]*AccountMeta, accountCount)
 
 	itr := 1
+
 	for idx, uniqAccount := range uniqAccounts {
 		if idx == feePayerIndex {
 			uniqAccount.IsSigner = true
@@ -708,7 +704,8 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 
 	for idx, acc := range allKeys {
 		addressLookupKeyEntry, isPresentedInTables := options.addressTablesIndex[acc.PublicKey]
-		_, isInvoked := programIDsMap[acc.PublicKey]
+		_, isInvoked := uniqPrograms[acc.PublicKey]
+
 		if isPresentedInTables && idx != 0 && !acc.IsSigner && !isInvoked {
 			lookup := lookupsMap[addressLookupKeyEntry.Address]
 			if acc.IsWritable {
@@ -740,6 +737,7 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 
 	var lookupsWritableKeys []PublicKey
 	var lookupsReadOnlyKeys []PublicKey
+
 	if len(lookupsMap) > 0 {
 		lookups := make([]MessageAddressTableLookup, 0, len(lookupsMap))
 
@@ -757,6 +755,7 @@ func NewTransaction(instructions []Instruction, recentBlockHash Hash, opts ...Tr
 	}
 
 	var idx uint8
+
 	accountKeyIndex := make(map[PublicKey]uint8, len(message.AccountKeys)+len(lookupsWritableKeys)+len(lookupsReadOnlyKeys))
 
 	for _, acc := range message.AccountKeys {

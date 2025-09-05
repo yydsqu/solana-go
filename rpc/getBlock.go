@@ -108,8 +108,8 @@ func (cl *Client) GetBlockWithOpts(
 			if !solana.IsAnyOfEncodingType(
 				opts.Encoding,
 				// Valid encodings:
-				// solana.EncodingJSON, // TODO
-				solana.EncodingJSONParsed, // TODO
+				solana.EncodingJSON, // TODO
+				//solana.EncodingJSONParsed, // TODO
 				solana.EncodingBase58,
 				solana.EncodingBase64,
 				solana.EncodingBase64Zstd,

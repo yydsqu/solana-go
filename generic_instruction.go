@@ -14,18 +14,6 @@
 
 package solana
 
-// NewInstruction creates a generic instruction with the provided
-// programID, accounts, and data bytes.
-func NewInstruction(programID PublicKey, accounts AccountMetaSlice, data []byte) *GenericInstruction {
-	return &GenericInstruction{
-		AccountValues: accounts,
-		ProgID:        programID,
-		DataBytes:     data,
-	}
-}
-
-var _ Instruction = &GenericInstruction{}
-
 type GenericInstruction struct {
 	AccountValues AccountMetaSlice
 	ProgID        PublicKey
@@ -42,4 +30,12 @@ func (in *GenericInstruction) Accounts() []*AccountMeta {
 
 func (in *GenericInstruction) Data() ([]byte, error) {
 	return in.DataBytes, nil
+}
+
+func NewInstruction(programID PublicKey, metas AccountMetaSlice, data []byte) *GenericInstruction {
+	return &GenericInstruction{
+		AccountValues: metas,
+		ProgID:        programID,
+		DataBytes:     data,
+	}
 }

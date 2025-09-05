@@ -26,7 +26,7 @@ func main() {
 	endpoint := rpc.TestNet_RPC
 	client := rpc.New(endpoint)
 
-	amount := solana.LAMPORTS_PER_SOL // 1 sol
+	amount := solana.LamportsPerSol // 1 sol
 	pubKey := solana.MustPublicKeyFromBase58("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 	out, err := client.RequestAirdrop(
 		context.TODO(),

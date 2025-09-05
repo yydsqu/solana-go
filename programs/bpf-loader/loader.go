@@ -88,8 +88,8 @@ func completePartialProgramInit(
 			!allowExcessiveBalance {
 			err = fmt.Errorf(
 				"buffer account has a balance: %v.%v; it may already be in use",
-				account.Lamports/solana.LAMPORTS_PER_SOL,
-				account.Lamports%solana.LAMPORTS_PER_SOL,
+				account.Lamports/solana.LamportsPerSol,
+				account.Lamports%solana.LamportsPerSol,
 			)
 			return
 		}
